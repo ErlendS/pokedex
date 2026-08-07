@@ -2445,10 +2445,16 @@ function ScanTargetSprite({
   concealed: boolean;
   spriteUrl: string | null;
 }) {
+  const [failedAnimatedUrl, setFailedAnimatedUrl] = useState<string | null>(null);
+  const displayUrl = failedAnimatedUrl === animatedSpriteUrl
+    ? spriteUrl ?? getSpriteUrl(25)
+    : animatedSpriteUrl ?? spriteUrl ?? getSpriteUrl(25);
+
   return (
     <Html
       center
       occlude
+      key={displayUrl}
       position={[0, 0.55, 0.9]}
       scale={0.46}
       style={{ pointerEvents: "none" }}
@@ -2458,7 +2464,10 @@ function ScanTargetSprite({
       <img
         alt=""
         draggable={false}
-        src={animatedSpriteUrl ?? spriteUrl ?? getSpriteUrl(25)}
+        onError={() => {
+          if (displayUrl === animatedSpriteUrl) setFailedAnimatedUrl(animatedSpriteUrl);
+        }}
+        src={displayUrl}
         style={{
           display: "block",
           filter: concealed ? "brightness(0)" : "none",
