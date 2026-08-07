@@ -1,5 +1,5 @@
 /** biome-ignore-all lint/a11y/noStaticElementInteractions: <explanation> */
-import { Cloud, Html, OrbitControls, Sky, useGLTF, useTexture } from "@react-three/drei";
+import { Cloud, Html, OrbitControls, Sky, useGLTF } from "@react-three/drei";
 import { Canvas, useFrame } from "@react-three/fiber";
 import {
   Suspense,
@@ -195,6 +195,7 @@ const APP_MODE_STORAGE_KEY = "pokedex:mode";
 const CAPTURED_POKEMON_STORAGE_KEY = "pokedex:captured-pokemon";
 const SHINY_CAPTURED_POKEMON_STORAGE_KEY = "pokedex:shiny-captured-pokemon";
 const GAME_GENERATIONS_STORAGE_KEY = "pokedex:game-generations";
+const RECENT_GAME_POKEMON_STORAGE_KEY = "pokedex:recent-game-pokemon";
 const WHOSE_THAT_POKEMON_VIDEO_ID = "EE-xtCF3T94";
 const WHOSE_THAT_POKEMON_INTRO_SECONDS = 5;
 const WHOSE_THAT_POKEMON_FALLBACK_MS =
@@ -245,6 +246,44 @@ function getSavedGameGenerations() {
   } catch {
     return DEFAULT_GAME_GENERATIONS;
   }
+}
+
+function getSavedRecentGamePokemonIds() {
+  try {
+    const savedRecentPokemon = window.localStorage.getItem(
+      RECENT_GAME_POKEMON_STORAGE_KEY,
+    );
+    const parsedRecentPokemon: unknown = savedRecentPokemon
+      ? JSON.parse(savedRecentPokemon)
+      : [];
+
+    if (!Array.isArray(parsedRecentPokemon)) {
+      return [];
+    }
+
+    return parsedRecentPokemon
+      .filter(
+        (pokemonId): pokemonId is number =>
+          Number.isInteger(pokemonId) &&
+          pokemonId >= 1 &&
+          pokemonId <= GAME_POKEMON_COUNT,
+      )
+      .reduce<number[]>(
+        (recentPokemonIds, pokemonId) =>
+          [...recentPokemonIds.filter((recentId) => recentId !== pokemonId), pokemonId]
+            .slice(-RECENT_GAME_POKEMON_WINDOW),
+        [],
+      );
+  } catch {
+    return [];
+  }
+}
+
+function saveRecentGamePokemonIds(recentPokemonIds: readonly number[]) {
+  window.localStorage.setItem(
+    RECENT_GAME_POKEMON_STORAGE_KEY,
+    JSON.stringify(recentPokemonIds.slice(-RECENT_GAME_POKEMON_WINDOW)),
+  );
 }
 
 function getSavedCapturedPokemonIds() {
@@ -1044,6 +1083,11 @@ function PokemonSprite({
   const [isLoaded, setIsLoaded] = useState(false);
   const [displayUrl, setDisplayUrl] = useState(animatedSpriteUrl);
 
+  useEffect(() => {
+    setIsLoaded(false);
+    setDisplayUrl(animatedSpriteUrl);
+  }, [animatedSpriteUrl]);
+
   return (
     <Html
       center
@@ -1289,17 +1333,18 @@ function LandscapeTree({
 }
 
 const ScanEnvironment = memo(function ScanEnvironment({
+  animatedSpriteUrl,
   concealed,
   habitat,
   isEvening,
   spriteUrl,
 }: {
+  animatedSpriteUrl: string | null;
   concealed: boolean;
   habitat: string;
   isEvening: boolean;
   spriteUrl: string | null;
 }) {
-  const targetTexture = useTexture(spriteUrl ?? getSpriteUrl(25));
   const [isWetWeather, setIsWetWeather] = useState(false);
 
   useEffect(() => {
@@ -1511,19 +1556,59 @@ const ScanEnvironment = memo(function ScanEnvironment({
           <cylinderGeometry args={[0.5, 0.74, 0.28, 10]} />
           <meshStandardMaterial color={scene.foliage} roughness={0.9} />
         </mesh>
-        <sprite position={[0, 0.03, 0.84]} scale={[1.8, 1.8, 1]}>
-          <spriteMaterial
-            color={concealed ? "#050505" : "#ffffff"}
-            map={targetTexture}
-            transparent
-            depthWrite={false}
+        <Html
+          center
+          position={[0, 0.03, 0.84]}
+          scale={0.48}
+          style={{ pointerEvents: "none" }}
+          transform
+        >
+          <AnimatedScanTarget
+            animatedSpriteUrl={animatedSpriteUrl}
+            concealed={concealed}
+            key={animatedSpriteUrl ?? spriteUrl}
+            spriteUrl={spriteUrl}
           />
-        </sprite>
+        </Html>
       </group>
       <Rainfall enabled={isWetWeather} />
     </group>
   );
 });
+
+function AnimatedScanTarget({
+  animatedSpriteUrl,
+  concealed,
+  spriteUrl,
+}: {
+  animatedSpriteUrl: string | null;
+  concealed: boolean;
+  spriteUrl: string | null;
+}) {
+  const fallbackUrl = spriteUrl ?? getSpriteUrl(25);
+  const [displayUrl, setDisplayUrl] = useState(animatedSpriteUrl ?? fallbackUrl);
+
+  useEffect(() => {
+    setDisplayUrl(animatedSpriteUrl ?? fallbackUrl);
+  }, [animatedSpriteUrl, fallbackUrl]);
+
+  return (
+    <img
+      alt={concealed ? "Mystery Pokemon silhouette" : "Pokemon scan target"}
+      draggable={false}
+      onError={() => setDisplayUrl(fallbackUrl)}
+      src={displayUrl}
+      style={{
+        display: "block",
+        filter: concealed ? "brightness(0)" : "none",
+        height: 168,
+        imageRendering: "pixelated",
+        objectFit: "contain",
+        width: 168,
+      }}
+    />
+  );
+}
 
 function PokedexModel({
   animatedSpriteUrl,
@@ -1804,10 +1889,15 @@ function App() {
   const [selectedGenerations, setSelectedGenerations] = useState<number[]>(
     getSavedGameGenerations,
   );
+  const [savedRecentGamePokemonIds] = useState<number[]>(
+    getSavedRecentGamePokemonIds,
+  );
   const [mode, setMode] = useState<AppMode>(initialMode);
   const [query, setQuery] = useState(INITIAL_QUERY);
   const [initialGamePokemonId] = useState<number | null>(() =>
-    initialMode === "game" ? getRandomGamePokemonId(getSavedGameGenerations()) : null,
+    initialMode === "game"
+      ? getRandomGamePokemonId(selectedGenerations, savedRecentGamePokemonIds)
+      : null,
   );
   const [submittedQuery, setSubmittedQuery] = useState(
     initialGamePokemonId ? String(initialGamePokemonId) : INITIAL_QUERY,
@@ -1848,7 +1938,9 @@ function App() {
   const guessRef = useRef("");
   const recognitionRef = useRef<VoiceRecognition | null>(null);
   const recentGamePokemonIdsRef = useRef<number[]>(
-    initialGamePokemonId ? [initialGamePokemonId] : [],
+    initialGamePokemonId
+      ? rememberGamePokemonId(savedRecentGamePokemonIds, initialGamePokemonId)
+      : savedRecentGamePokemonIds,
   );
   const [pokemonState, setPokemonState] = useState<PokemonState>({
     status: "loading",
@@ -1871,12 +1963,17 @@ function App() {
       recentGamePokemonIdsRef.current,
       nextPokemonId,
     );
+    saveRecentGamePokemonIds(recentGamePokemonIdsRef.current);
     setSubmittedQuery(String(nextPokemonId));
     setIsIntroComplete(false);
     setIsCryComplete(false);
     setIsHintVisible(false);
     setIsShinyRound(Math.random() < SHINY_ROUND_CHANCE);
   }, [selectedGenerations]);
+
+  useEffect(() => {
+    saveRecentGamePokemonIds(recentGamePokemonIdsRef.current);
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -2440,6 +2537,7 @@ function App() {
           />
           <Suspense fallback={null}>
             <ScanEnvironment
+              animatedSpriteUrl={animatedSpriteUrl}
               concealed={mode === "game" && !isGameRoundRevealed}
               habitat={habitat}
               isEvening={isEvening}
