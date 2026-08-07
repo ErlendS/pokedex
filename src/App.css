@@ -112,6 +112,145 @@
   outline-offset: 2px;
 }
 
+.scanner-actions {
+  display: grid;
+  gap: 10px;
+}
+
+.scan-button {
+  min-height: 44px;
+  border: 1px solid #258b69;
+  border-radius: 6px;
+  padding: 0 18px;
+  color: #17664d;
+  background: #ffffff;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.scan-button:hover {
+  background: #eff9f4;
+}
+
+.scan-button:focus-visible,
+.scanner-close:focus-visible {
+  outline: 3px solid rgba(37, 139, 105, 0.28);
+  outline-offset: 2px;
+}
+
+.scanner-help,
+.scanner-format {
+  margin: 0;
+  color: #66736f;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.scanner-backdrop {
+  position: fixed;
+  z-index: 20;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(6, 17, 14, 0.7);
+  box-sizing: border-box;
+}
+
+.scanner-dialog {
+  width: min(100%, 480px);
+  border-radius: 12px;
+  padding: 24px;
+  background: #ffffff;
+  box-shadow: 0 24px 80px rgba(6, 17, 14, 0.34);
+  box-sizing: border-box;
+}
+
+.scanner-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.scanner-heading .eyebrow {
+  margin-bottom: 4px;
+}
+
+.scanner-heading h2 {
+  margin: 0;
+  color: #14201d;
+  font-size: 24px;
+}
+
+.scanner-close {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 50%;
+  padding: 0;
+  color: #33413d;
+  background: #edf2f0;
+  font: 28px/1 sans-serif;
+  cursor: pointer;
+}
+
+.camera-frame {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #101714;
+}
+
+.camera-preview,
+.camera-placeholder {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.camera-preview {
+  object-fit: cover;
+}
+
+.camera-placeholder {
+  display: grid;
+  place-items: center;
+  color: #dbe6e2;
+  background: #101714;
+  font-size: 14px;
+}
+
+.scan-target {
+  position: absolute;
+  inset: 17%;
+  border: 3px solid rgba(255, 255, 255, 0.92);
+  border-radius: 12px;
+  box-shadow: 0 0 0 999px rgba(0, 0, 0, 0.22);
+}
+
+.scanner-status {
+  min-height: 22px;
+  margin: 14px 0 4px;
+  color: #258b69;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.scanner-status.error {
+  color: #b51d33;
+}
+
+.scanner-format code {
+  color: #33413d;
+  font-size: 12px;
+}
+
 @media (max-width: 860px) {
   .pokedex-app {
     grid-template-columns: 1fr;
@@ -131,5 +270,9 @@
 
   .control-panel h1 {
     font-size: 28px;
+  }
+
+  .scanner-dialog {
+    padding: 20px;
   }
 }
