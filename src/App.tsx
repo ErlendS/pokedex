@@ -240,12 +240,13 @@ const MAX_ROUND_POINTS = 100;
 const MINIMUM_STARTING_SCORE = 500;
 const EXTRA_TIME_SECONDS = 5;
 const EXTRA_TIME_HINT_COST = 100;
+const SKIP_POKEMON_COST = 200;
 const CONFETTI_UPGRADE_COST = 250;
 const CONFETTI_MAX_LEVEL = 1_000;
 const CONFETTI_DURATION_SECONDS = 5;
 const NAME_REVEAL_UPGRADE_COST = 150;
 const NAME_REVEAL_MAX_LEVEL = 10;
-const POKEDEX_SKIN_COST = 1_000;
+const LEGENDARY_SKIN_COST = 1_000;
 const UNCAUGHT_RADAR_COST = 1_000;
 const SHINY_ROUND_CHANCE = 0.2;
 const APP_MODE_STORAGE_KEY = "pokedex:mode";
@@ -290,6 +291,12 @@ const SKIN_RARITY: Record<SkinRarity, { weight: number; metalness: number; rough
   Rare: { weight: 25, metalness: 0.28, roughness: 0.3 },
   Unique: { weight: 8, metalness: 0.5, roughness: 0.22 },
   Legendary: { weight: 2, metalness: 0.78, roughness: 0.16 },
+};
+const SKIN_PURCHASE_COSTS: Record<SkinRarity, number> = {
+  Common: 250,
+  Rare: 500,
+  Unique: 750,
+  Legendary: LEGENDARY_SKIN_COST,
 };
 
 // A data-driven catalogue keeps skin rewards scalable without creating 200 bespoke UI paths.
@@ -858,7 +865,7 @@ function drawSkinPattern(
   const patternKind = patternKinds[Math.abs(seed) % patternKinds.length];
   const animatedPhase = phase * (0.72 + (Math.abs(seed) % 11) * 0.065) + seed * 0.019;
   context.clearRect(0, 0, width, height);
-  context.lineWidth = 5;
+  context.lineWidth = 11;
   context.lineCap = "round";
 
   if (patternKind === "Flower") {
@@ -1600,6 +1607,7 @@ function PokedexScreen({
   flavorText,
   revealAmount,
   showShinyIndicator,
+  skin,
   spriteUrl,
   typeNames,
 }: {
@@ -1608,12 +1616,14 @@ function PokedexScreen({
   flavorText: string | null;
   revealAmount: number;
   showShinyIndicator: boolean;
+  skin: PokedexSkin;
   spriteUrl: string | null;
   typeNames: string[];
 }) {
   return (
     <group position={POKEDEX_SCREEN_POSITION} rotation={[0, Math.PI / 2, 0]}>
       <ScreenBackground typeNames={typeNames} />
+      <LegendarySkinDecal skin={skin} />
       {spriteUrl ? (
         <PokemonSprite
           animatedSpriteUrl={animatedSpriteUrl ?? spriteUrl}
@@ -1866,6 +1876,99 @@ function Firefly({ x, y, z, phase }: { x: number; y: number; z: number; phase: n
   );
 }
 
+function LavaVolcano({
+  phase = 0,
+  position = [-4.8, -2.85, -12.6] as [number, number, number],
+  scale = 1.7,
+}: {
+  phase?: number;
+  position?: [number, number, number];
+  scale?: number;
+}) {
+  const volcanoRef = useRef<Group>(null);
+  const embers = useMemo(
+    () => Array.from({ length: 18 }, (_, index) => ({
+      angle: index * 2.399,
+      phase: phase + index * 0.41,
+      radius: 0.16 + (index % 5) * 0.075,
+    })),
+    [phase],
+  );
+
+  useFrame(({ clock }) => {
+    if (volcanoRef.current) volcanoRef.current.rotation.y = Math.sin(clock.getElapsedTime() * 0.12 + phase) * 0.08;
+  });
+
+  return (
+    <group ref={volcanoRef} position={position} scale={scale}>
+      <mesh scale={[1.5, 1.8, 1.3]}>
+        <coneGeometry args={[1, 1.9, 9]} />
+        <meshStandardMaterial color="#261d22" flatShading roughness={0.92} />
+      </mesh>
+      <mesh position={[0, 1.38, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <circleGeometry args={[0.34, 18]} />
+        <meshBasicMaterial color="#ff5a1f" toneMapped={false} />
+      </mesh>
+      {[-0.52, -0.2, 0.18, 0.48].map((x, index) => (
+        <mesh key={x} position={[x, 0.25 - index * 0.16, 0.75]} rotation={[-1.02, 0, 0]} scale={[0.13, 1.05 - index * 0.12, 1]}>
+          <planeGeometry args={[1, 1]} />
+          <meshBasicMaterial color={index % 2 ? "#ff7c24" : "#ffcc40"} transparent opacity={0.9} toneMapped={false} />
+        </mesh>
+      ))}
+      {embers.map((ember, index) => <LavaEmber key={index} {...ember} />)}
+    </group>
+  );
+}
+
+function LavaEmber({ angle, phase, radius }: { angle: number; phase: number; radius: number }) {
+  const emberRef = useRef<Mesh>(null);
+  useFrame(({ clock }) => {
+    if (!emberRef.current) return;
+    const time = clock.getElapsedTime() + phase;
+    const distance = radius + (Math.sin(time * 1.8) + 1) * 0.3;
+    emberRef.current.position.set(Math.cos(angle + time * 0.45) * distance, 1.2 + Math.abs(Math.sin(time * 1.4)) * 1.55, Math.sin(angle + time * 0.45) * distance);
+    emberRef.current.scale.setScalar(0.45 + Math.abs(Math.sin(time * 2.4)) * 0.5);
+  });
+  return <mesh ref={emberRef}><sphereGeometry args={[0.045, 6, 5]} /><meshBasicMaterial color="#ffca4d" toneMapped={false} /></mesh>;
+}
+
+function WindblownGrass({
+  position,
+  scale = 1,
+  seed,
+}: {
+  position: [number, number, number];
+  scale?: number;
+  seed: number;
+}) {
+  const grassRef = useRef<Group>(null);
+  const blades = useMemo(
+    () => Array.from({ length: 24 }, (_, index) => ({
+      x: ((index * 23 + seed * 11) % 100) / 100 - 0.5,
+      z: ((index * 37 + seed * 7) % 100) / 100 - 0.5,
+      height: 0.22 + ((index * 17 + seed) % 13) / 34,
+      phase: index * 0.48 + seed,
+    })),
+    [seed],
+  );
+
+  useFrame(({ clock }) => {
+    if (!grassRef.current) return;
+    grassRef.current.rotation.z = Math.sin(clock.getElapsedTime() * 0.72 + seed) * 0.055;
+  });
+
+  return (
+    <group ref={grassRef} position={position} scale={scale}>
+      {blades.map((blade, index) => (
+        <mesh key={index} position={[blade.x, blade.height / 2, blade.z]} rotation={[0, 0, Math.sin(blade.phase) * 0.12]}>
+          <planeGeometry args={[0.032, blade.height]} />
+          <meshStandardMaterial color={index % 3 === 0 ? "#78a94e" : index % 3 === 1 ? "#4f873f" : "#9abb57"} side={DoubleSide} roughness={1} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
 function LandscapeTree({
   foliage,
   index,
@@ -1988,7 +2091,11 @@ const ScanEnvironment = memo(function ScanEnvironment({
   const denseForest = primaryType === "grass" || primaryType === "bug" || habitat === "forest" || habitat === "rare";
   const hasCountryRoad = !scene.water && primaryType !== "cave";
   const hasCottage = !scene.water && primaryType !== "cave" && !scene.mountains;
-  const hasDistantMountains = !scene.water;
+  // Coastlines and dual-type Water Pokémon still get the shared mountain
+  // backdrop. Only a pure Water Pokémon is intentionally open-water.
+  const isPureWaterPokemon = typeNames.length === 1 && typeNames[0] === "water";
+  const hasDistantMountains = !isPureWaterPokemon;
+  const hasWindblownGrass = !scene.water && !isDesertBiome && !isVolcanicBiome;
   const trees = (denseForest
     ? [
         [-6.1, -7.6, 1.28], [-5.0, -8.5, 1.06], [-4.1, -10.2, 1.42],
@@ -2029,6 +2136,13 @@ const ScanEnvironment = memo(function ScanEnvironment({
     [-8.8, 0.7, 3.8], [-5.9, 1.35, 5.4], [-2.5, 0.9, 4.5],
     [0.6, 1.65, 6.1], [4.1, 0.82, 4.25], [7.4, 1.18, 5.15],
   ];
+  const horizonMountainRange: ReadonlyArray<readonly [number, number, number]> = [
+    [-10.5, 1.1, 5.8], [-7.2, 1.8, 7.2], [-3.8, 1.35, 6.4],
+    [0.2, 2.25, 8.1], [4.3, 1.55, 6.9], [8.1, 1.9, 7.4],
+  ];
+  const sideMountainRange: ReadonlyArray<readonly [number, number, number]> = [
+    [-5.6, 0.3, 1.65], [-3.9, 0.58, 2.15], [-2.1, 0.18, 1.35],
+  ];
   const hasMeadow = !scene.water && !isDesertBiome && !isVolcanicBiome;
 
   return (
@@ -2062,9 +2176,19 @@ const ScanEnvironment = memo(function ScanEnvironment({
         <meshStandardMaterial color={scene.ground} roughness={1} />
       </mesh>
       {hasDistantMountains ? (
+        <group position={[0, -1.15, -33]}>
+          {horizonMountainRange.map(([x, y, scale], index) => (
+            <mesh key={`horizon-mountain-${index}`} position={[x, y, -index * 0.7]} scale={[scale * 1.45, scale * 0.46, scale]}>
+              <coneGeometry args={[1, 1.8, 7]} />
+              <meshStandardMaterial color={scene.snow ? "#d9e9ee" : isVolcanicBiome ? "#241b22" : "#718a99"} depthWrite={false} flatShading roughness={1} transparent opacity={0.52} />
+            </mesh>
+          ))}
+        </group>
+      ) : null}
+      {hasDistantMountains ? (
         <group position={[0, -1.55, -20.2]}>
           {distantMountainRange.map(([x, y, scale], index) => (
-            <group key={`distant-mountain-${index}`} position={[x, y, -index * 0.45]} scale={scale}>
+            <group key={`distant-mountain-${index}`} position={[x, y, -index * 0.45]} scale={[scale * 1.28, scale * 0.68, scale]}>
               <mesh>
                 <coneGeometry args={[1, 1.8, 7]} />
                 <meshStandardMaterial
@@ -2082,6 +2206,23 @@ const ScanEnvironment = memo(function ScanEnvironment({
             </group>
           ))}
         </group>
+      ) : null}
+      {hasDistantMountains ? (
+        <group position={[-3.1, -2.65, -10.4]} rotation={[0, 0.18, 0]}>
+          {sideMountainRange.map(([x, y, scale], index) => (
+            <mesh key={`side-mountain-${index}`} position={[x, y, -index * 0.55]} scale={[scale * 1.2, scale * 0.92, scale]}>
+              <coneGeometry args={[1, 1.8, 7]} />
+              <meshStandardMaterial color={scene.snow ? "#bfd9e2" : isVolcanicBiome ? "#38262b" : index % 2 ? "#43564f" : "#526860"} flatShading roughness={1} />
+            </mesh>
+          ))}
+        </group>
+      ) : null}
+      {isVolcanicBiome ? (
+        <>
+          <LavaVolcano />
+          <LavaVolcano position={[0.9, -3.08, -17.8]} scale={1.12} phase={1.7} />
+          <LavaVolcano position={[5.15, -3.2, -20.6]} scale={0.82} phase={3.1} />
+        </>
       ) : null}
       {scene.water ? (
         <mesh position={[2.8, -3.65, -8.55]} rotation={[-Math.PI / 2, 0, 0]}>
@@ -2123,6 +2264,27 @@ const ScanEnvironment = memo(function ScanEnvironment({
           <meshStandardMaterial color={scene.foliage} flatShading roughness={1} />
         </mesh>
       ))}
+      {hasWindblownGrass ? (
+        <>
+          <WindblownGrass position={[-5.75, -3.48, -6.55]} scale={2.1} seed={1} />
+          <WindblownGrass position={[-7.35, -3.48, -3.9]} scale={2.8} seed={6} />
+          <WindblownGrass position={[-5.9, -3.48, -3.45]} scale={2.55} seed={7} />
+          <WindblownGrass position={[-3.6, -3.48, -8.1]} scale={1.8} seed={2} />
+          <WindblownGrass position={[0.1, -3.48, -9.25]} scale={2.4} seed={3} />
+          <WindblownGrass position={[4.9, -3.48, -7.1]} scale={2.25} seed={4} />
+          <WindblownGrass position={[5.55, -3.48, -10.6]} scale={1.9} seed={5} />
+        </>
+      ) : null}
+      {hasWindblownGrass ? (
+        <>
+          <LandscapeTree foliage={scene.foliage} index={11} position={[-6.7, -4.6, 1.12]} />
+          <LandscapeTree foliage={scene.foliage} index={12} position={[-5.55, -4.1, 0.84]} />
+          <mesh position={[-6.1, -3.38, -3.75]} scale={[0.72, 0.42, 0.52]}>
+            <dodecahedronGeometry args={[1, 0]} />
+            <meshStandardMaterial color="#53645b" flatShading roughness={1} />
+          </mesh>
+        </>
+      ) : null}
       {hasMeadow && wildflowers.map(([x, z], index) => (
         <group key={`flower-${x}-${z}`} position={[x, -3.48, z]}>
           <mesh position={[0, 0.12, 0]}>
@@ -2196,7 +2358,7 @@ const ScanEnvironment = memo(function ScanEnvironment({
             <coneGeometry args={[1, 1.8, 6]} />
             <meshStandardMaterial color={scene.snow ? "#d8e9ef" : isVolcanicBiome ? "#3f3032" : "#66736a"} flatShading roughness={1} />
           </mesh>
-          <mesh position={[0.25, 0.9, -0.5]} scale={[3.1, 3.9, 1.8]}>
+          <mesh position={[0.25, 0.68, -0.5]} scale={[2.45, 2.8, 1.8]}>
             <coneGeometry args={[1, 1.8, 6]} />
             <meshStandardMaterial color={scene.snow ? "#b9d4df" : isVolcanicBiome ? "#35272a" : "#59675f"} flatShading roughness={1} />
           </mesh>
@@ -2301,6 +2463,40 @@ function ScanTargetSprite({
   );
 }
 
+function LegendarySkinDecal({ skin }: { skin: PokedexSkin }) {
+  if (skin.rarity !== "Legendary") return null;
+  const seed = [...skin.id].reduce((total, character) => total * 31 + character.charCodeAt(0), 17);
+  const isFlame = Math.abs(seed) % 2 === 0;
+
+  return (
+    <Html
+      center
+      position={[0.56, 0.48, 0.014]}
+      scale={0.1}
+      style={{ pointerEvents: "none" }}
+      transform
+    >
+      {isFlame ? (
+        <svg aria-hidden="true" height="180" viewBox="0 0 180 180" width="180">
+          <g fill="none" stroke="#ffd34d" strokeLinecap="round" strokeWidth="9">
+            <path d="M31 154 C9 105 55 93 54 38 C94 66 112 84 94 122 C126 98 137 79 129 48 C180 100 159 158 111 164" />
+            <path d="M67 158 C48 129 80 112 82 78 C112 105 119 129 99 159" stroke="#ff6a32" />
+          </g>
+          <animateTransform attributeName="transform" dur="1.8s" repeatCount="indefinite" type="rotate" values="-2 90 90;2 90 90;-2 90 90" />
+        </svg>
+      ) : (
+        <svg aria-hidden="true" height="180" viewBox="0 0 180 180" width="180">
+          <g fill="#ff87be" stroke="#fff1a6" strokeWidth="4" transform="translate(90 90)">
+            {Array.from({ length: 8 }, (_, index) => <ellipse key={index} rx="17" ry="43" transform={`rotate(${index * 45}) translate(0 -38)`} />)}
+            <circle fill="#ffcc40" r="22" />
+          </g>
+          <animateTransform attributeName="transform" dur="2.4s" repeatCount="indefinite" type="rotate" values="0 90 90;360 90 90" />
+        </svg>
+      )}
+    </Html>
+  );
+}
+
 function PokedexModel({
   animatedSpriteUrl,
   concealed,
@@ -2383,7 +2579,7 @@ function PokedexModel({
             selectedSkin.lightness / 100,
           );
           material.emissive.set("#ffffff");
-          material.emissiveIntensity = selectedSkin.rarity === "Legendary" ? 0.5 : 0;
+          material.emissiveIntensity = selectedSkin.rarity === "Legendary" ? 1.1 : 0;
           material.metalness = selectedSkin.metalness;
           material.roughness = selectedSkin.roughness;
           material.needsUpdate = true;
@@ -2411,7 +2607,7 @@ function PokedexModel({
       skinPatternTexture.needsUpdate = true;
     }
 
-    const glow = 0.3 + (Math.sin(elapsed * 4) + 1) * 0.18;
+    const glow = 0.85 + (Math.sin(elapsed * 4) + 1) * 0.38;
     legendaryFinishMaterialsRef.current.forEach((material) => {
       material.color.setHSL(
         selectedSkin.hue / 360,
@@ -2455,6 +2651,7 @@ function PokedexModel({
         flavorText={flavorText}
         revealAmount={revealAmount}
         showShinyIndicator={showShinyIndicator}
+        skin={selectedSkin}
         spriteUrl={spriteUrl}
         typeNames={typeNames}
       />
@@ -3447,6 +3644,23 @@ function App() {
     setRoundSecondsRemaining((seconds) => seconds + EXTRA_TIME_SECONDS);
     setHasBoughtExtraTime(true);
   };
+  const skipPokemon = () => {
+    if (
+      roundResult !== "guessing" ||
+      pokemonState.status !== "ready" ||
+      gameStats.score < SKIP_POKEMON_COST
+    ) {
+      return;
+    }
+
+    setGameStats((currentStats) => ({
+      ...currentStats,
+      score: currentStats.score - SKIP_POKEMON_COST,
+      streak: 0,
+    }));
+    setWalletRewardMessage(`Skipped this Pokémon for ${SKIP_POKEMON_COST} points.`);
+    startNewRound();
+  };
   const buyConfettiUpgrade = () => {
     if (
       confettiLevel >= CONFETTI_MAX_LEVEL ||
@@ -3479,8 +3693,11 @@ function App() {
   };
   const buyOrEquipSkin = (skinId: PokedexSkinId) => {
     if (ownedSkins.has(skinId)) { setEquippedSkin(skinId); return; }
-    if (gameStats.score < POKEDEX_SKIN_COST) return;
-    setGameStats((stats) => ({ ...stats, score: stats.score - POKEDEX_SKIN_COST }));
+    const skin = POKEDEX_SKIN_BY_ID.get(skinId);
+    if (!skin) return;
+    const cost = SKIN_PURCHASE_COSTS[skin.rarity];
+    if (gameStats.score < cost) return;
+    setGameStats((stats) => ({ ...stats, score: stats.score - cost }));
     setOwnedSkins((skins) => new Set([...skins, skinId]));
     setEquippedSkin(skinId);
   };
@@ -3890,7 +4107,7 @@ function App() {
                   <div aria-label={`${ownedSkins.size} of ${POKEDEX_SKINS.length} skins unlocked`} className="skin-progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={POKEDEX_SKINS.length} aria-valuenow={ownedSkins.size}>
                     <span style={{ width: `${(ownedSkins.size / POKEDEX_SKINS.length) * 100}%` }} />
                   </div>
-                  <p className="skin-shop-copy">Win correct rounds for weighted drops, or spend {POKEDEX_SKIN_COST} points to unlock any skin.</p>
+                  <p className="skin-shop-copy">Win correct rounds for weighted drops, or buy skins by rarity. Legendary skins cost {LEGENDARY_SKIN_COST} points.</p>
                   <fieldset className="hand-tone-picker">
                     <legend>Hand tone</legend>
                     <div className="hand-tone-options">
@@ -3913,11 +4130,12 @@ function App() {
                     <div className="skin-grid">
                       {POKEDEX_SKINS.map((skin) => {
                         const owned = ownedSkins.has(skin.id);
-                        return <button aria-pressed={equippedSkin === skin.id} className={`skin-card rarity-${skin.rarity.toLowerCase()}${equippedSkin === skin.id ? " is-equipped" : ""}`} disabled={!owned && gameStats.score < POKEDEX_SKIN_COST} key={skin.id} onClick={() => buyOrEquipSkin(skin.id)} type="button">
+                        const cost = SKIN_PURCHASE_COSTS[skin.rarity];
+                        return <button aria-pressed={equippedSkin === skin.id} className={`skin-card rarity-${skin.rarity.toLowerCase()}${equippedSkin === skin.id ? " is-equipped" : ""}`} disabled={!owned && gameStats.score < cost} key={skin.id} onClick={() => buyOrEquipSkin(skin.id)} type="button">
                           <span className="skin-swatch" style={{ background: `hsl(${skin.hue} ${skin.saturation}% ${skin.lightness}%)` }} />
                           <span className="skin-card-name">{skin.label}</span>
                           <span className="skin-rarity">{skin.rarity}</span>
-                          <span className="skin-card-action">{equippedSkin === skin.id ? "Equipped" : owned ? "Equip" : `${POKEDEX_SKIN_COST} pts`}</span>
+                          <span className="skin-card-action">{equippedSkin === skin.id ? "Equipped" : owned ? "Equip" : `${cost} pts`}</span>
                         </button>;
                       })}
                     </div>
@@ -3961,6 +4179,18 @@ function App() {
                   type="button"
                 >
                   {isHintVisible ? "Free reveal used" : "Free hint: reveal 10%"}
+                </button>
+                <button
+                  className="hint-button"
+                  disabled={
+                    pokemonState.status !== "ready" ||
+                    isGameRoundRevealed ||
+                    gameStats.score < SKIP_POKEMON_COST
+                  }
+                  onClick={skipPokemon}
+                  type="button"
+                >
+                  Skip Pokémon ({SKIP_POKEMON_COST} pts)
                 </button>
                 <button
                   className="hint-button"
