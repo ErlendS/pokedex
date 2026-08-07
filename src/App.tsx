@@ -21,6 +21,10 @@ import "./App.css";
 type Pokemon = {
   id: number;
   name: string;
+  cries: {
+    latest: string | null;
+    legacy: string | null;
+  };
   species: {
     name: string;
     url: string;
@@ -39,9 +43,15 @@ type PokemonSpecies = {
 };
 
 type PokemonState =
-  | { status: "loading"; pokemon: null; error: "" }
-  | { status: "ready"; pokemon: Pokemon; flavorText: string; error: "" }
-  | { status: "error"; pokemon: null; error: string };
+  | { status: "loading"; pokemon: null; error: ""; query: "" }
+  | {
+      status: "ready";
+      pokemon: Pokemon;
+      flavorText: string;
+      error: "";
+      query: string;
+    }
+  | { status: "error"; pokemon: null; error: string; query: "" };
 
 type AppMode = "lookup" | "game";
 type RoundResult = "guessing" | "correct" | "incorrect";
@@ -721,6 +731,7 @@ function App() {
     status: "loading",
     pokemon: null,
     error: "",
+    query: "",
   });
 
   useEffect(() => {
@@ -734,11 +745,12 @@ function App() {
           status: "error",
           pokemon: null,
           error: "Enter a Pokemon name or number.",
+          query: "",
         });
         return;
       }
 
-      setPokemonState({ status: "loading", pokemon: null, error: "" });
+      setPokemonState({ status: "loading", pokemon: null, error: "", query: "" });
 
       try {
         const response = await fetch(
@@ -771,7 +783,13 @@ function App() {
           }
         }
 
-        setPokemonState({ status: "ready", pokemon, flavorText, error: "" });
+        setPokemonState({
+          status: "ready",
+          pokemon,
+          flavorText,
+          error: "",
+          query: normalizedQuery,
+        });
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") {
           return;
@@ -784,6 +802,7 @@ function App() {
             error instanceof Error
               ? error.message
               : "Could not load that Pokemon.",
+          query: "",
         });
       }
     }
@@ -792,6 +811,33 @@ function App() {
 
     return () => controller.abort();
   }, [submittedQuery]);
+
+  useEffect(() => {
+    if (
+      mode !== "game" ||
+      roundResult !== "guessing" ||
+      pokemonState.status !== "ready" ||
+      pokemonState.query !== submittedQuery.trim().toLowerCase()
+    ) {
+      return;
+    }
+
+    const cryUrl = pokemonState.pokemon.cries.latest ?? pokemonState.pokemon.cries.legacy;
+
+    if (!cryUrl) {
+      return;
+    }
+
+    const cry = new Audio(cryUrl);
+    cry.play().catch(() => {
+      // Browsers can block sound until a user has interacted with the page.
+    });
+
+    return () => {
+      cry.pause();
+      cry.currentTime = 0;
+    };
+  }, [mode, pokemonState, roundResult, submittedQuery]);
 
   const spriteUrl =
     pokemonState.status === "ready"
@@ -921,7 +967,7 @@ function App() {
                 : roundResult === "incorrect" &&
                     pokemonState.status === "ready"
                   ? `Not quite. It's ${formatPokemonName(pokemonState.pokemon.name)}.`
-                  : "Name the Pokemon hiding on the Pokedex screen."}
+                  : "Listen to the cry, then name the Pokemon hiding on the Pokedex screen."}
             </p>
           ) : (
             <p className="status">
