@@ -28,6 +28,39 @@
   box-sizing: border-box;
 }
 
+.mode-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 8px;
+  background: rgba(28, 42, 38, 0.08);
+}
+
+.mode-switch button {
+  min-height: 38px;
+  border: 0;
+  border-radius: 5px;
+  padding: 6px 10px;
+  color: #53615d;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.mode-switch button[aria-pressed="true"] {
+  color: #14201d;
+  background: #ffffff;
+  box-shadow: 0 1px 4px rgba(28, 42, 38, 0.12);
+}
+
+.mode-switch button:focus-visible {
+  outline: 3px solid rgba(37, 139, 105, 0.22);
+  outline-offset: 2px;
+}
+
 .eyebrow {
   margin: 0 0 12px;
   color: #c8263e;
@@ -54,6 +87,16 @@
 
 .status.error {
   color: #b51d33;
+}
+
+.game-result.correct {
+  color: #167455;
+  font-weight: 700;
+}
+
+.game-result.incorrect {
+  color: #b51d33;
+  font-weight: 700;
 }
 
 .lookup-form {
@@ -105,6 +148,16 @@
 
 .lookup-row button:hover {
   background: #a91d32;
+}
+
+.lookup-row button:disabled,
+.lookup-row input:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.lookup-row button:disabled:hover {
+  background: #c8263e;
 }
 
 .lookup-row button:focus-visible {

@@ -36,7 +36,11 @@ type PokemonState =
   | { status: "ready"; pokemon: Pokemon; flavorText: string; error: "" }
   | { status: "error"; pokemon: null; error: string };
 
+type AppMode = "lookup" | "game";
+type RoundResult = "guessing" | "correct" | "incorrect";
+
 const INITIAL_QUERY = "25";
+const KANTO_POKEMON_COUNT = 151;
 const POKEDEX_SCREEN_POSITION: [number, number, number] = [0.053, 0.054, 0.685];
 const D_PAD_CENTER = {
   x: 0.078,
@@ -74,6 +78,21 @@ function getEnglishFlavorText(species: PokemonSpecies) {
 
 function getSpriteUrl(pokemonId: number) {
   return `${SPRITE_BASE_URL}/${pokemonId}.png`;
+}
+
+function getRandomKantoPokemonId() {
+  return Math.floor(Math.random() * KANTO_POKEMON_COUNT) + 1;
+}
+
+function normalizePokemonName(name: string) {
+  return name.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function formatPokemonName(name: string) {
+  return name
+    .split("-")
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
 }
 
 function wrapCanvasText(
@@ -228,7 +247,13 @@ function ScreenBackground() {
   );
 }
 
-function PokemonSprite({ spriteUrl }: { spriteUrl: string }) {
+function PokemonSprite({
+  concealed,
+  spriteUrl,
+}: {
+  concealed: boolean;
+  spriteUrl: string;
+}) {
   return (
     <Html
       center
@@ -240,11 +265,12 @@ function PokemonSprite({ spriteUrl }: { spriteUrl: string }) {
       zIndexRange={[10, 0]}
     >
       <img
-        alt=""
+        alt={concealed ? "Mystery Pokemon silhouette" : "Pokemon sprite"}
         draggable={false}
         src={spriteUrl}
         style={{
           display: "block",
+          filter: concealed ? "brightness(0)" : "none",
           height: SPRITE_RENDER_SIZE,
           imageRendering: "pixelated",
           objectFit: "contain",
@@ -283,9 +309,11 @@ function FlavorTextOverlay({ text }: { text: string }) {
 }
 
 function PokedexScreen({
+  concealed,
   flavorText,
   spriteUrl,
 }: {
+  concealed: boolean;
   flavorText: string | null;
   spriteUrl: string | null;
 }) {
@@ -293,7 +321,11 @@ function PokedexScreen({
     <group position={POKEDEX_SCREEN_POSITION} rotation={[0, Math.PI / 2, 0]}>
       <ScreenBackground />
       {spriteUrl ? (
-        <PokemonSprite key={spriteUrl} spriteUrl={spriteUrl} />
+        <PokemonSprite
+          concealed={concealed}
+          key={spriteUrl}
+          spriteUrl={spriteUrl}
+        />
       ) : null}
       {flavorText ? <FlavorTextOverlay text={flavorText} /> : null}
     </group>
@@ -374,10 +406,12 @@ function DPadControls({ onStep }: { onStep: (delta: -1 | 1) => void }) {
 }
 
 function PokedexModel({
+  concealed,
   flavorText,
   onDPadStep,
   spriteUrl,
 }: {
+  concealed: boolean;
   flavorText: string | null;
   onDPadStep: (delta: -1 | 1) => void;
   spriteUrl: string | null;
@@ -387,7 +421,11 @@ function PokedexModel({
   return (
     <group rotation={[0, -0.22, 0]} scale={2.55}>
       <primitive object={scene} />
-      <PokedexScreen flavorText={flavorText} spriteUrl={spriteUrl} />
+      <PokedexScreen
+        concealed={concealed}
+        flavorText={flavorText}
+        spriteUrl={spriteUrl}
+      />
       <DPadControls onStep={onDPadStep} />
     </group>
   );
@@ -396,8 +434,11 @@ function PokedexModel({
 useGLTF.preload("/Pokedex.glb");
 
 function App() {
+  const [mode, setMode] = useState<AppMode>("lookup");
   const [query, setQuery] = useState(INITIAL_QUERY);
   const [submittedQuery, setSubmittedQuery] = useState(INITIAL_QUERY);
+  const [guess, setGuess] = useState("");
+  const [roundResult, setRoundResult] = useState<RoundResult>("guessing");
   const [pokemonState, setPokemonState] = useState<PokemonState>({
     status: "loading",
     pokemon: null,
@@ -478,14 +519,48 @@ function App() {
     pokemonState.status === "ready"
       ? getSpriteUrl(pokemonState.pokemon.id)
       : null;
+  const isGameRoundRevealed =
+    roundResult === "correct" || roundResult === "incorrect";
   const flavorText =
-    pokemonState.status === "ready" ? pokemonState.flavorText : null;
+    pokemonState.status === "ready" &&
+    (mode === "lookup" || isGameRoundRevealed)
+      ? pokemonState.flavorText
+      : null;
   const pokemonLabel =
     pokemonState.status === "ready"
-      ? `#${pokemonState.pokemon.id} ${pokemonState.pokemon.name}`
+      ? mode === "game" && !isGameRoundRevealed
+        ? "Mystery Pokemon"
+        : `#${pokemonState.pokemon.id} ${formatPokemonName(pokemonState.pokemon.name)}`
       : pokemonState.status === "loading"
         ? "Loading Pokemon"
         : "No Pokemon loaded";
+  const startNewRound = () => {
+    setGuess("");
+    setRoundResult("guessing");
+    setSubmittedQuery(String(getRandomKantoPokemonId()));
+  };
+  const switchMode = (nextMode: AppMode) => {
+    setMode(nextMode);
+
+    if (nextMode === "game") {
+      startNewRound();
+      return;
+    }
+
+    setSubmittedQuery(query);
+  };
+  const submitGuess = () => {
+    if (pokemonState.status !== "ready" || !guess.trim()) {
+      return;
+    }
+
+    setRoundResult(
+      normalizePokemonName(guess) ===
+        normalizePokemonName(pokemonState.pokemon.name)
+        ? "correct"
+        : "incorrect",
+    );
+  };
   const loadPokemonByOffset = (delta: -1 | 1) => {
     const fallbackId = Number.parseInt(submittedQuery, 10);
     const currentId =
@@ -510,8 +585,11 @@ function App() {
           <directionalLight position={[-3, 2, -4]} intensity={0.9} />
           <Suspense fallback={null}>
             <PokedexModel
+              concealed={mode === "game" && !isGameRoundRevealed}
               flavorText={flavorText}
-              onDPadStep={loadPokemonByOffset}
+              onDPadStep={
+                mode === "lookup" ? loadPokemonByOffset : startNewRound
+              }
               spriteUrl={spriteUrl}
             />
           </Suspense>
@@ -526,12 +604,43 @@ function App() {
         </Canvas>
       </section>
 
-      <section className="control-panel" aria-label="Pokemon lookup">
+      <section className="control-panel" aria-label="Pokedex controls">
+        <div className="mode-switch" aria-label="Pokedex mode">
+          <button
+            aria-pressed={mode === "lookup"}
+            onClick={() => switchMode("lookup")}
+            type="button"
+          >
+            Pokedex
+          </button>
+          <button
+            aria-pressed={mode === "game"}
+            onClick={() => switchMode("game")}
+            type="button"
+          >
+            Who's That Pokemon?
+          </button>
+        </div>
+
         <div>
-          <p className="eyebrow">Three.js Pokedex POC</p>
+          <p className="eyebrow">
+            {mode === "game" ? "Kanto guessing game" : "Three.js Pokedex POC"}
+          </p>
           <h1>{pokemonLabel}</h1>
           {pokemonState.status === "error" ? (
             <p className="status error">{pokemonState.error}</p>
+          ) : mode === "game" ? (
+            <p
+              aria-live="polite"
+              className={`status game-result ${roundResult}`}
+            >
+              {roundResult === "correct" && pokemonState.status === "ready"
+                ? `Correct! It's ${formatPokemonName(pokemonState.pokemon.name)}.`
+                : roundResult === "incorrect" &&
+                    pokemonState.status === "ready"
+                  ? `Not quite. It's ${formatPokemonName(pokemonState.pokemon.name)}.`
+                  : "Name the Pokemon hiding on the Pokedex screen."}
+            </p>
           ) : (
             <p className="status">
               Sprite fetched from PokeAPI and rendered on the model display.
@@ -539,26 +648,67 @@ function App() {
           )}
         </div>
 
-        <form
-          className="lookup-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            setSubmittedQuery(query);
-          }}
-        >
-          <label htmlFor="pokemon-query">Pokemon</label>
-          <div className="lookup-row">
-            <input
-              id="pokemon-query"
-              name="pokemon"
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="pikachu or 25"
-              spellCheck="false"
-              value={query}
-            />
-            <button type="submit">Load</button>
-          </div>
-        </form>
+        {mode === "lookup" ? (
+          <form
+            className="lookup-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              setSubmittedQuery(query);
+            }}
+          >
+            <label htmlFor="pokemon-query">Pokemon</label>
+            <div className="lookup-row">
+              <input
+                id="pokemon-query"
+                name="pokemon"
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="pikachu or 25"
+                spellCheck="false"
+                value={query}
+              />
+              <button type="submit">Load</button>
+            </div>
+          </form>
+        ) : (
+          <form
+            className="lookup-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+
+              if (isGameRoundRevealed) {
+                startNewRound();
+                return;
+              }
+
+              submitGuess();
+            }}
+          >
+            <label htmlFor="pokemon-guess">Your guess</label>
+            <div className="lookup-row">
+              <input
+                autoComplete="off"
+                disabled={
+                  pokemonState.status !== "ready" || isGameRoundRevealed
+                }
+                id="pokemon-guess"
+                name="guess"
+                onChange={(event) => setGuess(event.target.value)}
+                placeholder="Who's that Pokemon?"
+                spellCheck="false"
+                value={guess}
+              />
+              <button
+                disabled={
+                  pokemonState.status !== "ready" ||
+                  (!isGameRoundRevealed && !guess.trim())
+                }
+                type="submit"
+              >
+                {isGameRoundRevealed ? "Next" : "Guess"}
+              </button>
+            </div>
+          </form>
+        )}
       </section>
     </main>
   );
