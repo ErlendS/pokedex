@@ -1,7 +1,14 @@
 /** biome-ignore-all lint/a11y/noStaticElementInteractions: <explanation> */
 import { Html, OrbitControls, useGLTF } from "@react-three/drei";
 import { Canvas } from "@react-three/fiber";
-import { Suspense, useEffect, useMemo, useState } from "react";
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   CanvasTexture,
   DoubleSide,
@@ -39,6 +46,24 @@ type PokemonState =
 type AppMode = "lookup" | "game";
 type RoundResult = "guessing" | "correct" | "incorrect";
 
+type DetectedBarcode = {
+  rawValue: string;
+};
+
+type BarcodeDetectorInstance = {
+  detect: (source: ImageBitmapSource) => Promise<DetectedBarcode[]>;
+};
+
+type BarcodeDetectorConstructor = new (options?: {
+  formats?: string[];
+}) => BarcodeDetectorInstance;
+
+declare global {
+  interface Window {
+    BarcodeDetector?: BarcodeDetectorConstructor;
+  }
+}
+
 const INITIAL_QUERY = "25";
 const KANTO_POKEMON_COUNT = 151;
 const POKEDEX_SCREEN_POSITION: [number, number, number] = [0.053, 0.054, 0.685];
@@ -56,6 +81,32 @@ const SPRITE_RENDER_SIZE = 96;
 const SPRITE_HTML_SCALE = 0.15;
 const SPRITE_BASE_URL =
   "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon";
+const POKEMON_SCAN_VALUE = /^(?:pokemon:)?([a-z0-9][a-z0-9-]{0,39})$/i;
+
+function getPokemonQueryFromScan(rawValue: string) {
+  const value = rawValue.trim();
+  const directMatch = value.match(POKEMON_SCAN_VALUE);
+
+  if (directMatch) {
+    return directMatch[1].toLowerCase();
+  }
+
+  try {
+    const url = new URL(value);
+    const pathMatch = url.pathname.match(/^\/api\/v2\/pokemon\/([^/]+)\/?$/i);
+
+    if (url.hostname === "pokeapi.co" && pathMatch) {
+      const decodedValue = decodeURIComponent(pathMatch[1]);
+      const urlMatch = decodedValue.match(POKEMON_SCAN_VALUE);
+
+      return urlMatch ? urlMatch[1].toLowerCase() : null;
+    }
+  } catch {
+    // The scanned value is not a URL.
+  }
+
+  return null;
+}
 
 function normalizeFlavorText(flavorText: string) {
   return flavorText
@@ -433,6 +484,233 @@ function PokedexModel({
 
 useGLTF.preload("/Pokedex.glb");
 
+function PokemonScanner({ onScan }: { onScan: (query: string) => void }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [scannerStatus, setScannerStatus] = useState<
+    "requesting" | "scanning" | "error"
+  >("requesting");
+  const [scannerMessage, setScannerMessage] = useState("");
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream>(null);
+  const animationFrameRef = useRef<number>(null);
+
+  const stopCamera = useCallback(() => {
+    if (animationFrameRef.current !== null) {
+      window.cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+  }, []);
+
+  const closeScanner = useCallback(() => {
+    stopCamera();
+    setIsOpen(false);
+  }, [stopCamera]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function startScanner() {
+      if (!window.BarcodeDetector) {
+        setScannerStatus("error");
+        setScannerMessage(
+          "QR scanning is not available in this browser. Use the Pokemon search instead.",
+        );
+        return;
+      }
+
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setScannerStatus("error");
+        setScannerMessage(
+          "Camera access is not available here. Use the Pokemon search instead.",
+        );
+        return;
+      }
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: { facingMode: { ideal: "environment" } },
+        });
+
+        if (cancelled) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+
+        streamRef.current = stream;
+
+        const video = videoRef.current;
+
+        if (!video) {
+          stopCamera();
+          return;
+        }
+
+        video.srcObject = stream;
+        await video.play();
+
+        if (cancelled) {
+          return;
+        }
+
+        const detector = new window.BarcodeDetector({ formats: ["qr_code"] });
+        setScannerStatus("scanning");
+        setScannerMessage("Point the camera at a Pokemon QR code.");
+
+        async function detectCode() {
+          if (cancelled || !videoRef.current) {
+            return;
+          }
+
+          try {
+            const barcodes = await detector.detect(videoRef.current);
+
+            for (const barcode of barcodes) {
+              const query = getPokemonQueryFromScan(barcode.rawValue);
+
+              if (query) {
+                onScan(query);
+                closeScanner();
+                return;
+              }
+            }
+
+            if (barcodes.length > 0) {
+              setScannerMessage(
+                "That code is not a Pokemon name, number, or PokeAPI link.",
+              );
+            }
+          } catch {
+            if (!cancelled) {
+              stopCamera();
+              setScannerStatus("error");
+              setScannerMessage(
+                "The camera code reader stopped working. Close this scanner and try again.",
+              );
+            }
+            return;
+          }
+
+          animationFrameRef.current = window.requestAnimationFrame(detectCode);
+        }
+
+        animationFrameRef.current = window.requestAnimationFrame(detectCode);
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+
+        stopCamera();
+        setScannerStatus("error");
+        setScannerMessage(
+          error instanceof DOMException && error.name === "NotAllowedError"
+            ? "Camera permission was denied. Allow camera access or use the Pokemon search."
+            : "Could not start the camera. Use the Pokemon search instead.",
+        );
+      }
+    }
+
+    startScanner();
+
+    return () => {
+      cancelled = true;
+      stopCamera();
+    };
+  }, [closeScanner, isOpen, onScan, stopCamera]);
+
+  return (
+    <>
+      <div className="scanner-actions">
+        <button
+          className="scan-button"
+          onClick={() => {
+            setScannerStatus("requesting");
+            setScannerMessage("Requesting camera access...");
+            setIsOpen(true);
+          }}
+          type="button"
+        >
+          Scan Pokecode
+        </button>
+        <p className="scanner-help">
+          Reads a QR code with a Pokemon name or number. It does not visually
+          recognize Pokemon.
+        </p>
+      </div>
+
+      {isOpen ? (
+        <div className="scanner-backdrop">
+          <section
+            aria-labelledby="scanner-title"
+            aria-modal="true"
+            className="scanner-dialog"
+            role="dialog"
+          >
+            <div className="scanner-heading">
+              <div>
+                <p className="eyebrow">Camera scanner</p>
+                <h2 id="scanner-title">Scan a Pokecode</h2>
+              </div>
+              <button
+                aria-label="Close scanner"
+                className="scanner-close"
+                onClick={closeScanner}
+                type="button"
+              >
+                &times;
+              </button>
+            </div>
+
+            <div className="camera-frame">
+              <video
+                aria-label="Camera preview"
+                className="camera-preview"
+                muted
+                playsInline
+                ref={videoRef}
+              />
+              {scannerStatus !== "scanning" ? (
+                <div className="camera-placeholder">
+                  {scannerStatus === "requesting"
+                    ? "Starting camera..."
+                    : "Camera unavailable"}
+                </div>
+              ) : null}
+              {scannerStatus === "scanning" ? (
+                <div aria-hidden="true" className="scan-target" />
+              ) : null}
+            </div>
+
+            <p
+              aria-live="polite"
+              className={`scanner-status ${
+                scannerStatus === "error" ? "error" : ""
+              }`}
+            >
+              {scannerMessage}
+            </p>
+            <p className="scanner-format">
+              Supported QR contents: <code>pikachu</code>, <code>25</code>, or a
+              PokeAPI Pokemon URL.
+            </p>
+          </section>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 function App() {
   const [mode, setMode] = useState<AppMode>("lookup");
   const [query, setQuery] = useState(INITIAL_QUERY);
@@ -574,6 +852,10 @@ function App() {
     setQuery(nextQuery);
     setSubmittedQuery(nextQuery);
   };
+  const loadScannedPokemon = useCallback((scannedQuery: string) => {
+    setQuery(scannedQuery);
+    setSubmittedQuery(scannedQuery);
+  }, []);
 
   return (
     <main className="pokedex-app">
@@ -649,26 +931,29 @@ function App() {
         </div>
 
         {mode === "lookup" ? (
-          <form
-            className="lookup-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              setSubmittedQuery(query);
-            }}
-          >
-            <label htmlFor="pokemon-query">Pokemon</label>
-            <div className="lookup-row">
-              <input
-                id="pokemon-query"
-                name="pokemon"
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="pikachu or 25"
-                spellCheck="false"
-                value={query}
-              />
-              <button type="submit">Load</button>
-            </div>
-          </form>
+          <>
+            <form
+              className="lookup-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                setSubmittedQuery(query);
+              }}
+            >
+              <label htmlFor="pokemon-query">Pokemon</label>
+              <div className="lookup-row">
+                <input
+                  id="pokemon-query"
+                  name="pokemon"
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="pikachu or 25"
+                  spellCheck="false"
+                  value={query}
+                />
+                <button type="submit">Load</button>
+              </div>
+            </form>
+            <PokemonScanner onScan={loadScannedPokemon} />
+          </>
         ) : (
           <form
             className="lookup-form"
