@@ -616,10 +616,12 @@ function PokedexModel({
   typeNames: string[];
 }) {
   const { scene } = useGLTF("/Pokedex.glb");
+  const { scene: handScene } = useGLTF("/PokedexHand.glb");
 
   return (
     <group rotation={[0, -0.22, 0]} scale={2.55}>
       <primitive object={scene} />
+      <primitive object={handScene} />
       <PokedexScreen
         animatedSpriteUrl={animatedSpriteUrl}
         concealed={concealed}
@@ -633,6 +635,7 @@ function PokedexModel({
 }
 
 useGLTF.preload("/Pokedex.glb");
+useGLTF.preload("/PokedexHand.glb");
 
 function PokemonScanner({ onScan }: { onScan: (query: string) => void }) {
   const [isOpen, setIsOpen] = useState(false);
