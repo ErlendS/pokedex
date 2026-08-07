@@ -906,7 +906,7 @@ function App() {
   return (
     <main className="pokedex-app">
       <section className="viewer-shell" aria-label="Interactive Pokedex model">
-        <Canvas camera={{ position: [6.7, 1.6, 3.2], fov: 56 }}>
+        <Canvas camera={{ position: [8.6, 2, 4.1], fov: 60 }}>
           <color attach="background" args={["#e8f6f0"]} />
           <ambientLight intensity={1.1} />
           <directionalLight position={[4, 4, 3]} intensity={2.4} />
