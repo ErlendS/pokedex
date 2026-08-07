@@ -120,6 +120,35 @@
   font-weight: 700;
 }
 
+.game-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin: 14px 0 0;
+}
+
+.game-stats div {
+  border: 1px solid rgba(28, 42, 38, 0.12);
+  border-radius: 8px;
+  padding: 9px 8px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.game-stats dt {
+  color: #66736f;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.game-stats dd {
+  margin: 3px 0 0;
+  color: #14201d;
+  font-size: 19px;
+  font-weight: 800;
+}
+
 .lookup-form {
   display: grid;
   gap: 10px;

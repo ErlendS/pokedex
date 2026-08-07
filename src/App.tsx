@@ -59,6 +59,11 @@ type PokemonState =
 
 type AppMode = "lookup" | "game";
 type RoundResult = "guessing" | "correct" | "incorrect";
+type GameStats = {
+  score: number;
+  streak: number;
+  correctAnswers: number;
+};
 
 type DetectedBarcode = {
   rawValue: string;
@@ -834,6 +839,11 @@ function App() {
   const [submittedQuery, setSubmittedQuery] = useState(INITIAL_QUERY);
   const [guess, setGuess] = useState("");
   const [roundResult, setRoundResult] = useState<RoundResult>("guessing");
+  const [gameStats, setGameStats] = useState<GameStats>({
+    score: 0,
+    streak: 0,
+    correctAnswers: 0,
+  });
   const [pokemonState, setPokemonState] = useState<PokemonState>({
     status: "loading",
     pokemon: null,
@@ -992,12 +1002,24 @@ function App() {
       return;
     }
 
-    setRoundResult(
+    const isCorrect =
       normalizePokemonName(guess) ===
-        normalizePokemonName(pokemonState.pokemon.name)
-        ? "correct"
-        : "incorrect",
-    );
+      normalizePokemonName(pokemonState.pokemon.name);
+
+    setRoundResult(isCorrect ? "correct" : "incorrect");
+    setGameStats((currentStats) => {
+      if (!isCorrect) {
+        return { ...currentStats, streak: 0 };
+      }
+
+      const nextStreak = currentStats.streak + 1;
+
+      return {
+        score: currentStats.score + 100 * nextStreak,
+        streak: nextStreak,
+        correctAnswers: currentStats.correctAnswers + 1,
+      };
+    });
   };
   const loadPokemonByOffset = (delta: -1 | 1) => {
     const fallbackId = Number.parseInt(submittedQuery, 10);
@@ -1073,17 +1095,33 @@ function App() {
           {pokemonState.status === "error" ? (
             <p className="status error">{pokemonState.error}</p>
           ) : mode === "game" ? (
-            <p
-              aria-live="polite"
-              className={`status game-result ${roundResult}`}
-            >
-              {roundResult === "correct" && pokemonState.status === "ready"
-                ? `Correct! It's ${formatPokemonName(pokemonState.pokemon.name)}.`
-                : roundResult === "incorrect" &&
-                    pokemonState.status === "ready"
-                  ? `Not quite. It's ${formatPokemonName(pokemonState.pokemon.name)}.`
-                  : "Listen to the cry, then name the Pokemon hiding on the Pokedex screen."}
-            </p>
+            <>
+              <p
+                aria-live="polite"
+                className={`status game-result ${roundResult}`}
+              >
+                {roundResult === "correct" && pokemonState.status === "ready"
+                  ? `Correct! It's ${formatPokemonName(pokemonState.pokemon.name)}.`
+                  : roundResult === "incorrect" &&
+                      pokemonState.status === "ready"
+                    ? `Not quite. It's ${formatPokemonName(pokemonState.pokemon.name)}.`
+                    : "Listen to the cry, then name the Pokemon hiding on the Pokedex screen."}
+              </p>
+              <dl className="game-stats" aria-label="Current game session score">
+                <div>
+                  <dt>Score</dt>
+                  <dd>{gameStats.score}</dd>
+                </div>
+                <div>
+                  <dt>Streak</dt>
+                  <dd>{gameStats.streak}</dd>
+                </div>
+                <div>
+                  <dt>Correct</dt>
+                  <dd>{gameStats.correctAnswers}</dd>
+                </div>
+              </dl>
+            </>
           ) : (
             <p className="status">
               Sprite fetched from PokeAPI and rendered on the model display.
