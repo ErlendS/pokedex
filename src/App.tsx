@@ -1982,13 +1982,13 @@ const ScanEnvironment = memo(function ScanEnvironment({
   } as const;
   const scene = typeScene[primaryType as keyof typeof typeScene] ?? typeScene.normal;
   const isNightBiome = isEvening || scene.night;
-  const isLushBiome = primaryType === "grass" || primaryType === "bug";
   const isDesertBiome = primaryType === "ground" || primaryType === "rock";
   const isVolcanicBiome = primaryType === "fire";
   const isCalmNightBiome = scene.night && !scene.storm;
   const denseForest = primaryType === "grass" || primaryType === "bug" || habitat === "forest" || habitat === "rare";
   const hasCountryRoad = !scene.water && primaryType !== "cave";
   const hasCottage = !scene.water && primaryType !== "cave" && !scene.mountains;
+  const hasDistantMountains = !scene.water;
   const trees = (denseForest
     ? [
         [-6.1, -7.6, 1.28], [-5.0, -8.5, 1.06], [-4.1, -10.2, 1.42],
@@ -2019,6 +2019,17 @@ const ScanEnvironment = memo(function ScanEnvironment({
     [-4.8, -6.4], [-3.7, -6.95], [-2.6, -7.5], [2.95, -7.4], [4.15, -6.8],
     [5.3, -6.25],
   ] as const;
+  const iceMountainRange: ReadonlyArray<readonly [number, number, number, string]> = [
+    [-6.2, 1.15, 3.6, "#b8d5df"],
+    [-2.9, 1.8, 4.8, "#dcecf0"],
+    [1.4, 1.35, 4.1, "#c7e0e7"],
+    [5.2, 0.95, 3.25, "#b2d0da"],
+  ];
+  const distantMountainRange: ReadonlyArray<readonly [number, number, number]> = [
+    [-8.8, 0.7, 3.8], [-5.9, 1.35, 5.4], [-2.5, 0.9, 4.5],
+    [0.6, 1.65, 6.1], [4.1, 0.82, 4.25], [7.4, 1.18, 5.15],
+  ];
+  const hasMeadow = !scene.water && !isDesertBiome && !isVolcanicBiome;
 
   return (
     <group>
@@ -2050,6 +2061,28 @@ const ScanEnvironment = memo(function ScanEnvironment({
         <planeGeometry args={[50, 48, 1, 1]} />
         <meshStandardMaterial color={scene.ground} roughness={1} />
       </mesh>
+      {hasDistantMountains ? (
+        <group position={[0, -1.55, -20.2]}>
+          {distantMountainRange.map(([x, y, scale], index) => (
+            <group key={`distant-mountain-${index}`} position={[x, y, -index * 0.45]} scale={scale}>
+              <mesh>
+                <coneGeometry args={[1, 1.8, 7]} />
+                <meshStandardMaterial
+                  color={scene.snow ? "#b5d1dc" : isVolcanicBiome ? "#2e2529" : index % 2 ? "#53665c" : "#6b7768"}
+                  flatShading
+                  roughness={0.95}
+                />
+              </mesh>
+              {scene.snow ? (
+                <mesh position={[0, 0.72, 0]} scale={[0.56, 0.4, 0.56]}>
+                  <coneGeometry args={[1, 1.2, 7]} />
+                  <meshStandardMaterial color="#f7fdff" flatShading roughness={0.98} />
+                </mesh>
+              ) : null}
+            </group>
+          ))}
+        </group>
+      ) : null}
       {scene.water ? (
         <mesh position={[2.8, -3.65, -8.55]} rotation={[-Math.PI / 2, 0, 0]}>
           <planeGeometry args={[18, 20, 1, 1]} />
@@ -2090,7 +2123,7 @@ const ScanEnvironment = memo(function ScanEnvironment({
           <meshStandardMaterial color={scene.foliage} flatShading roughness={1} />
         </mesh>
       ))}
-      {isLushBiome && wildflowers.map(([x, z], index) => (
+      {hasMeadow && wildflowers.map(([x, z], index) => (
         <group key={`flower-${x}-${z}`} position={[x, -3.48, z]}>
           <mesh position={[0, 0.12, 0]}>
             <cylinderGeometry args={[0.012, 0.02, 0.24, 4]} />
@@ -2102,7 +2135,7 @@ const ScanEnvironment = memo(function ScanEnvironment({
           </mesh>
         </group>
       ))}
-      {isLushBiome && wildflowerPatches.map(([x, z], index) => (
+      {hasMeadow && wildflowerPatches.map(([x, z], index) => (
         <group key={`flower-patch-${x}-${z}`} position={[x, -3.48, z]}>
           {[-0.15, 0, 0.15].map((offset, flowerIndex) => (
             <group key={offset} position={[offset, flowerIndex === 1 ? 0.04 : 0, flowerIndex === 1 ? 0.08 : -0.05]}>
@@ -2141,8 +2174,24 @@ const ScanEnvironment = memo(function ScanEnvironment({
           <meshStandardMaterial color="#65736b" flatShading roughness={1} />
         </mesh>
       ))}
-      {scene.mountains ? (
+      {hasDistantMountains ? (
         <group position={[0.7, -2.18, -12.8]}>
+          {scene.snow ? (
+            <group position={[0, 0.15, -2.4]}>
+              {iceMountainRange.map(([x, y, scale, color], index) => (
+                <group key={`ice-range-${index}`} position={[x, y, -index * 0.34]} scale={scale}>
+                  <mesh>
+                    <coneGeometry args={[1, 1.8, 7]} />
+                    <meshStandardMaterial color={color} flatShading roughness={0.9} />
+                  </mesh>
+                  <mesh position={[0, 0.68, 0]} scale={[0.56, 0.38, 0.56]}>
+                    <coneGeometry args={[1, 1.2, 7]} />
+                    <meshStandardMaterial color="#f6fdff" flatShading roughness={0.96} />
+                  </mesh>
+                </group>
+              ))}
+            </group>
+          ) : null}
           <mesh position={[-3.5, 0.55, 0]} scale={[2.4, 2.8, 1.5]}>
             <coneGeometry args={[1, 1.8, 6]} />
             <meshStandardMaterial color={scene.snow ? "#d8e9ef" : isVolcanicBiome ? "#3f3032" : "#66736a"} flatShading roughness={1} />
