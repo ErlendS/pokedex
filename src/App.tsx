@@ -275,6 +275,7 @@ type PokedexSkin = {
   lightness: number;
   metalness: number;
   roughness: number;
+  legendaryEffect?: "Flame" | "Flower";
 };
 
 const HAND_TONES = [
@@ -315,8 +316,15 @@ const POKEDEX_SKINS: PokedexSkin[] = Array.from({ length: 204 }, (_, index) => {
   const form = SKIN_FORMS[Math.floor(index / SKIN_THEMES.length) % SKIN_FORMS.length];
   const rarity = SKIN_RARITIES[index % SKIN_RARITIES.length];
   const traits = SKIN_RARITY[rarity];
-  const label = index === 0 ? "Classic Red" : index === 1 ? "Midnight" : `${theme.name} ${form}`;
-  return { id: index === 0 ? "classic" : index === 1 ? "midnight" : `skin-${index + 1}`, label, rarity, weight: traits.weight, hue: theme.hue, saturation: theme.saturation, lightness: Math.min(70, theme.lightness + (Math.floor(index / SKIN_THEMES.length) % 3) * 5), metalness: traits.metalness, roughness: traits.roughness };
+  const legendaryEffect = rarity === "Legendary" ? (Math.floor(index / SKIN_RARITIES.length) % 2 === 0 ? "Flame" : "Flower") : undefined;
+  const label = index === 0
+    ? "Classic Red"
+    : index === 1
+      ? "Midnight"
+      : legendaryEffect
+        ? `${legendaryEffect} Legendary ${form}`
+        : `${theme.name} ${form}`;
+  return { id: index === 0 ? "classic" : index === 1 ? "midnight" : `skin-${index + 1}`, label, rarity, weight: traits.weight, hue: theme.hue, saturation: theme.saturation, lightness: Math.min(70, theme.lightness + (Math.floor(index / SKIN_THEMES.length) % 3) * 5), metalness: traits.metalness, roughness: traits.roughness, legendaryEffect };
 });
 const POKEDEX_SKIN_BY_ID = new Map(POKEDEX_SKINS.map((skin) => [skin.id, skin]));
 const WHOSE_THAT_POKEMON_VIDEO_ID = "EE-xtCF3T94";
@@ -1543,6 +1551,7 @@ function PokemonSprite({
     <Html
       center
       occlude
+      key={animatedSpriteUrl ?? spriteUrl ?? "fallback-target"}
       position={[0, 0, 0.006]}
       scale={SPRITE_HTML_SCALE}
       style={{ pointerEvents: "none" }}
@@ -2465,8 +2474,7 @@ function ScanTargetSprite({
 
 function LegendarySkinDecal({ skin }: { skin: PokedexSkin }) {
   if (skin.rarity !== "Legendary") return null;
-  const seed = [...skin.id].reduce((total, character) => total * 31 + character.charCodeAt(0), 17);
-  const isFlame = Math.abs(seed) % 2 === 0;
+  const isFlame = skin.legendaryEffect === "Flame";
 
   return (
     <Html
@@ -3955,9 +3963,7 @@ function App() {
               habitat={habitat}
               isEvening={isEvening}
               key={
-                mode === "game" && !isGameRoundRevealed
-                  ? "scan-target-silhouette"
-                  : "scan-target-visible"
+                `${mode === "game" && !isGameRoundRevealed ? "scan-target-silhouette" : "scan-target-visible"}-${animatedSpriteUrl ?? spriteUrl ?? "fallback"}`
               }
               spriteUrl={spriteUrl}
               typeNames={typeNames}
