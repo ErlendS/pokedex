@@ -2031,9 +2031,9 @@ function WorldConfetti({ level }: { level: number }) {
   const particleCount = useMemo(() => {
     const hardwareThreads = navigator.hardwareConcurrency ?? 4;
     const adaptiveCap =
-      hardwareThreads >= 8 ? 200_000 : hardwareThreads >= 6 ? 120_000 : 60_000;
+      hardwareThreads >= 8 ? 1_000_000 : hardwareThreads >= 6 ? 500_000 : 250_000;
 
-    return Math.min(adaptiveCap, 4_000 + level * 250);
+    return Math.min(adaptiveCap, 10_000 + level * 1_000);
   }, [level]);
   const particleSystem = useMemo(() => {
     const geometry = new BufferGeometry();
@@ -2117,7 +2117,7 @@ function WorldConfetti({ level }: { level: number }) {
         ref={materialRef}
         uniforms={{ elapsed: { value: 0 } }}
         vertexShader={
-          "attribute vec3 origin; attribute vec3 velocity; attribute vec3 color; attribute float landingTime; uniform float elapsed; varying vec3 vColor; void main() { float t = min(elapsed, landingTime); vec3 worldPosition = origin + velocity * t; worldPosition.y = max(-3.64, origin.y + velocity.y * t - 2.4 * t * t); vec4 mvPosition = modelViewMatrix * vec4(worldPosition, 1.0); gl_Position = projectionMatrix * mvPosition; gl_PointSize = clamp(7.0 * (180.0 / -mvPosition.z), 2.0, 9.0); vColor = color; }"
+          "attribute vec3 origin; attribute vec3 velocity; attribute vec3 color; attribute float landingTime; uniform float elapsed; varying vec3 vColor; void main() { float t = min(elapsed, landingTime); vec3 worldPosition = origin + velocity * t; worldPosition.y = max(-3.64, origin.y + velocity.y * t - 2.4 * t * t); bool withinCasing = worldPosition.x > -1.15 && worldPosition.x < 2.45 && worldPosition.y > -3.1 && worldPosition.y < 1.9 && worldPosition.z < 2.1 && worldPosition.z > -6.5; if (withinCasing) { worldPosition.z = 2.13; worldPosition.x += sin(origin.y * 17.0 + origin.z * 11.0) * 0.08; worldPosition.y += cos(origin.x * 13.0 + origin.z * 7.0) * 0.05; } vec4 mvPosition = modelViewMatrix * vec4(worldPosition, 1.0); gl_Position = projectionMatrix * mvPosition; gl_PointSize = clamp(8.5 * (180.0 / -mvPosition.z), 2.0, 11.0); vColor = color; }"
         }
       />
     </points>
