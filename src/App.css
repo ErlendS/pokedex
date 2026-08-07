@@ -22,11 +22,29 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) 360px;
   background:
-    linear-gradient(90deg, rgba(20, 132, 101, 0.08), transparent 34%),
+    linear-gradient(90deg, hsl(var(--skin-hue, 358) var(--skin-saturation, 92%) var(--skin-lightness, 38%) / 0.13), transparent 34%),
     #f5faf7;
 }
+.pokedex-app > aside,
+.pokedex-app .sidebar {
+  background-color: hsl(var(--skin-hue, 358) var(--skin-saturation, 92%) 12% / 0.13);
+}
 .skin-shop { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.skin-shop strong { width: 100%; font-size: 13px; color: #33413d; }
+.skin-shop strong { font-size: 13px; color: #33413d; }
+.skin-shop-heading { width: 100%; display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.skin-shop-heading span, .skin-shop-copy { color: #52625d; font-size: 12px; }
+.skin-shop-copy { width: 100%; margin: 0; }
+.skin-progress-track { width: 100%; height: 6px; background: #dce8e1; border-radius: 999px; overflow: hidden; }
+.skin-progress-track > span { display: block; height: 100%; background: hsl(var(--skin-hue, 358) var(--skin-saturation, 92%) var(--skin-lightness, 38%)); transition: width 180ms ease; }
+.skin-catalog { width: 100%; }
+.skin-catalog summary { cursor: pointer; font-weight: 700; color: #33413d; }
+.skin-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-top: 8px; max-height: 360px; overflow: auto; padding-right: 4px; }
+.skin-card { display: grid; grid-template-columns: 12px 1fr; align-items: center; gap: 3px 6px; text-align: left; padding: 6px; border: 1px solid #d8e2dc; border-radius: 8px; background: #fff; font: inherit; font-size: 11px; }
+.skin-card.is-equipped { outline: 2px solid hsl(var(--skin-hue, 358) var(--skin-saturation, 92%) var(--skin-lightness, 38%)); }
+.skin-swatch { width: 12px; height: 24px; border-radius: 4px; grid-row: span 3; }
+.skin-card-name { font-weight: 700; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.skin-rarity, .skin-card-action { color: #57665f; font-size: 10px; }
+.rarity-rare .skin-rarity { color: #2e65bd; }.rarity-unique .skin-rarity { color: #8b3cc7; }.rarity-legendary .skin-rarity { color: #a36400; font-weight: 800; }
 
 .viewer-shell {
   min-height: 100svh;

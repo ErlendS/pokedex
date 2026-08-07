@@ -132,6 +132,7 @@ type YouTubePlayer = {
   }) => void;
   playVideo: () => void;
   stopVideo: () => void;
+  mute: () => void;
   unMute: () => void;
 };
 
@@ -259,12 +260,48 @@ const COMPLETED_ROUNDS_STORAGE_KEY = "pokedex:completed-rounds";
 const POKEDEX_SKINS_STORAGE_KEY = "pokedex:owned-skins";
 const POKEDEX_EQUIPPED_SKIN_STORAGE_KEY = "pokedex:equipped-skin";
 const UNCAUGHT_RADAR_STORAGE_KEY = "pokedex:uncaught-radar";
-const POKEDEX_SKINS = [
-  { id: "classic", label: "Classic Red" }, { id: "midnight", label: "Midnight" },
-  { id: "neon", label: "Neon Cyber" }, { id: "forest", label: "Forest Ranger" },
-  { id: "ocean", label: "Ocean" }, { id: "gold", label: "Champion Gold" },
-] as const;
-type PokedexSkinId = (typeof POKEDEX_SKINS)[number]["id"];
+const INTRO_MUTED_STORAGE_KEY = "pokedex:intro-muted";
+type SkinRarity = "Common" | "Rare" | "Unique" | "Legendary";
+type PokedexSkinId = string;
+type PokedexSkin = {
+  id: PokedexSkinId;
+  label: string;
+  rarity: SkinRarity;
+  weight: number;
+  hue: number;
+  saturation: number;
+  lightness: number;
+  metalness: number;
+  roughness: number;
+};
+
+const SKIN_RARITY: Record<SkinRarity, { weight: number; metalness: number; roughness: number }> = {
+  Common: { weight: 55, metalness: 0.1, roughness: 0.44 },
+  Rare: { weight: 25, metalness: 0.28, roughness: 0.3 },
+  Unique: { weight: 8, metalness: 0.5, roughness: 0.22 },
+  Legendary: { weight: 2, metalness: 0.78, roughness: 0.16 },
+};
+
+// A data-driven catalogue keeps skin rewards scalable without creating 200 bespoke UI paths.
+const SKIN_THEMES: Array<{ name: string; hue: number; saturation: number; lightness: number }> = [
+  { name: "Crimson", hue: 358, saturation: 92, lightness: 38 }, { name: "Cobalt", hue: 216, saturation: 80, lightness: 38 },
+  { name: "Verdant", hue: 132, saturation: 67, lightness: 30 }, { name: "Solar", hue: 43, saturation: 92, lightness: 43 },
+  { name: "Violet", hue: 271, saturation: 76, lightness: 42 }, { name: "Coral", hue: 11, saturation: 86, lightness: 48 },
+  { name: "Arctic", hue: 195, saturation: 80, lightness: 54 }, { name: "Obsidian", hue: 230, saturation: 28, lightness: 16 },
+  { name: "Flower", hue: 329, saturation: 76, lightness: 50 }, { name: "Lightning", hue: 52, saturation: 96, lightness: 46 },
+  { name: "Flame", hue: 12, saturation: 94, lightness: 45 }, { name: "Ultraviolet", hue: 290, saturation: 88, lightness: 43 },
+];
+const SKIN_FORMS = ["Scout", "Ranger", "Circuit", "Aurora", "Comet", "Bloom", "Tide", "Ember", "Prism", "Phantom", "Relic", "Crown", "Nova", "Cipher", "Voyager", "Pulse", "Meteor"];
+const SKIN_RARITIES: SkinRarity[] = ["Common", "Common", "Common", "Common", "Rare", "Rare", "Rare", "Unique", "Unique", "Legendary"];
+const POKEDEX_SKINS: PokedexSkin[] = Array.from({ length: 204 }, (_, index) => {
+  const theme = SKIN_THEMES[index % SKIN_THEMES.length];
+  const form = SKIN_FORMS[Math.floor(index / SKIN_THEMES.length) % SKIN_FORMS.length];
+  const rarity = SKIN_RARITIES[index % SKIN_RARITIES.length];
+  const traits = SKIN_RARITY[rarity];
+  const label = index === 0 ? "Classic Red" : index === 1 ? "Midnight" : `${theme.name} ${form}`;
+  return { id: index === 0 ? "classic" : index === 1 ? "midnight" : `skin-${index + 1}`, label, rarity, weight: traits.weight, hue: theme.hue, saturation: theme.saturation, lightness: Math.min(70, theme.lightness + (Math.floor(index / SKIN_THEMES.length) % 3) * 5), metalness: traits.metalness, roughness: traits.roughness };
+});
+const POKEDEX_SKIN_BY_ID = new Map(POKEDEX_SKINS.map((skin) => [skin.id, skin]));
 const WHOSE_THAT_POKEMON_VIDEO_ID = "EE-xtCF3T94";
 const WHOSE_THAT_POKEMON_INTRO_SECONDS = 5;
 const WHOSE_THAT_POKEMON_FALLBACK_MS =
@@ -915,9 +952,11 @@ function playShinyFlourish() {
 function WhosThatPokemonIntro({
   playbackKey,
   onComplete,
+  isMuted,
 }: {
   playbackKey: string | null;
   onComplete: () => void;
+  isMuted: boolean;
 }) {
   const playerRef = useRef<YouTubePlayer | null>(null);
   const [isReady, setIsReady] = useState(false);
@@ -991,18 +1030,32 @@ function WhosThatPokemonIntro({
   }, [completePlayback]);
 
   useEffect(() => {
+    if (!playerRef.current) return;
+
+    if (isMuted) {
+      playerRef.current.mute();
+    } else {
+      playerRef.current.unMute();
+    }
+  }, [isMuted]);
+
+  useEffect(() => {
     if (!playbackKey || !isReady || !playerRef.current) {
       return;
     }
 
     completedPlaybackRef.current = null;
-    playerRef.current.unMute();
+    if (isMuted) {
+      playerRef.current.mute();
+    } else {
+      playerRef.current.unMute();
+    }
     playerRef.current.loadVideoById({
       videoId: WHOSE_THAT_POKEMON_VIDEO_ID,
       startSeconds: 0,
       endSeconds: WHOSE_THAT_POKEMON_INTRO_SECONDS,
     });
-  }, [isReady, playbackKey]);
+  }, [isMuted, isReady, playbackKey]);
 
   useEffect(() => {
     if (!playbackKey) {
@@ -1612,6 +1665,67 @@ function Rainfall({ enabled }: { enabled: boolean }) {
   );
 }
 
+function Snowfall() {
+  const meshRef = useRef<InstancedMesh>(null);
+  const dummy = useMemo(() => new Object3D(), []);
+  const flakes = useMemo(
+    () =>
+      Array.from({ length: 160 }, (_, index) => ({
+        x: ((index * 29) % 19) - 9.5,
+        y: -2.8 + ((index * 47) % 96) / 10,
+        z: -4.5 - ((index * 61) % 145) / 10,
+        speed: 0.45 + (index % 5) * 0.11,
+      })),
+    [],
+  );
+
+  useFrame((_, delta) => {
+    if (!meshRef.current) return;
+    flakes.forEach((flake, index) => {
+      flake.y -= delta * flake.speed;
+      if (flake.y < -3.55) flake.y = 5.4 + (index % 9) * 0.15;
+      dummy.position.set(flake.x + Math.sin(flake.y * 2 + index) * 0.08, flake.y, flake.z);
+      dummy.scale.setScalar(0.65 + (index % 4) * 0.12);
+      dummy.updateMatrix();
+      meshRef.current?.setMatrixAt(index, dummy.matrix);
+    });
+    meshRef.current.instanceMatrix.needsUpdate = true;
+  });
+
+  return (
+    <instancedMesh ref={meshRef} args={[undefined, undefined, flakes.length]}>
+      <sphereGeometry args={[0.035, 5, 4]} />
+      <meshBasicMaterial color="#f7fdff" transparent opacity={0.9} />
+    </instancedMesh>
+  );
+}
+
+function MoonlitSky() {
+  const stars = useMemo(
+    () => Array.from({ length: 34 }, (_, index) => ({
+      x: -6.8 + ((index * 37) % 136) / 10,
+      y: 0.4 + ((index * 29) % 42) / 10,
+      z: -13.5 + (index % 6) * 0.22,
+      size: 0.012 + (index % 4) * 0.007,
+    })),
+    [],
+  );
+  return (
+    <group>
+      <mesh position={[-4.9, 3.4, -11.8]}>
+        <sphereGeometry args={[0.38, 12, 8]} />
+        <meshBasicMaterial color="#dce8ff" toneMapped={false} />
+      </mesh>
+      {stars.map((star, index) => (
+        <mesh key={index} position={[star.x, star.y, star.z]}>
+          <sphereGeometry args={[star.size, 5, 4]} />
+          <meshBasicMaterial color="#e6eeff" toneMapped={false} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
 function LandscapeTree({
   foliage,
   index,
@@ -1654,12 +1768,14 @@ const ScanEnvironment = memo(function ScanEnvironment({
   habitat,
   isEvening,
   spriteUrl,
+  typeNames,
 }: {
   animatedSpriteUrl: string | null;
   concealed: boolean;
   habitat: string;
   isEvening: boolean;
   spriteUrl: string | null;
+  typeNames: string[];
 }) {
   const [isWetWeather, setIsWetWeather] = useState(false);
 
@@ -1684,7 +1800,7 @@ const ScanEnvironment = memo(function ScanEnvironment({
     void loadOsloWeather();
     return () => controller.abort();
   }, []);
-  const scene = {
+  const habitatScene = {
     cave: { ground: "#6f7667", foliage: "#5d744d", water: false, mountains: true },
     forest: { ground: "#2f6e3c", foliage: "#24653a", water: false, mountains: false },
     grassland: { ground: "#5da34a", foliage: "#347c3c", water: false, mountains: false },
@@ -1700,9 +1816,39 @@ const ScanEnvironment = memo(function ScanEnvironment({
     water: false,
     mountains: false,
   };
-  const denseForest = habitat === "forest" || habitat === "rare";
-  const hasCountryRoad = !scene.water && habitat !== "cave";
-  const hasCottage = !scene.water && habitat !== "cave" && habitat !== "mountain";
+  // The biome changes with a new Pokémon, never while the player is typing a
+  // guess. PokeAPI type is deliberately a stronger signal than habitat so an
+  // Ice Pokémon never appears in a sunny grassland and Dark stays moonlit.
+  const primaryType = typeNames[0] ?? "normal";
+  const typeScene = {
+    bug: { ground: "#4d7c32", foliage: "#2f6c37", sky: "#8fc8ec", water: false, mountains: false, snow: false, storm: false, night: false },
+    dark: { ground: "#18251f", foliage: "#172f2a", sky: "#080d21", water: false, mountains: true, snow: false, storm: false, night: true },
+    dragon: { ground: "#584b63", foliage: "#415e53", sky: "#413451", water: false, mountains: true, snow: false, storm: false, night: true },
+    electric: { ground: "#55634c", foliage: "#384f3c", sky: "#2c3750", water: false, mountains: false, snow: false, storm: true, night: false },
+    fairy: { ground: "#8fba81", foliage: "#5d9a62", sky: "#d8b7dc", water: false, mountains: false, snow: false, storm: false, night: false },
+    fighting: { ground: "#9c7147", foliage: "#72623f", sky: "#c98e63", water: false, mountains: true, snow: false, storm: false, night: false },
+    fire: { ground: "#6b4435", foliage: "#744737", sky: "#9a4d44", water: false, mountains: true, snow: false, storm: false, night: false },
+    flying: { ground: "#78ad79", foliage: "#4d8d66", sky: "#84bfe8", water: false, mountains: false, snow: false, storm: false, night: false },
+    ghost: { ground: "#29323f", foliage: "#33415c", sky: "#16152f", water: false, mountains: true, snow: false, storm: false, night: true },
+    grass: { ground: "#2f6e3c", foliage: "#24653a", sky: "#8fc8ec", water: false, mountains: false, snow: false, storm: false, night: false },
+    ground: { ground: "#a48358", foliage: "#786f43", sky: "#d5ad73", water: false, mountains: true, snow: false, storm: false, night: false },
+    ice: { ground: "#d7edf2", foliage: "#7caeb7", sky: "#aecce2", water: false, mountains: true, snow: true, storm: false, night: false },
+    normal: { ground: habitatScene.ground, foliage: habitatScene.foliage, sky: "#8fc8ec", water: habitatScene.water, mountains: habitatScene.mountains, snow: false, storm: false, night: false },
+    poison: { ground: "#5d4a6d", foliage: "#4e5d45", sky: "#76598c", water: false, mountains: false, snow: false, storm: false, night: true },
+    psychic: { ground: "#a96985", foliage: "#825572", sky: "#925a94", water: false, mountains: false, snow: false, storm: false, night: true },
+    rock: { ground: "#786d59", foliage: "#59634c", sky: "#8791a0", water: false, mountains: true, snow: false, storm: false, night: false },
+    steel: { ground: "#61717a", foliage: "#536866", sky: "#7f99aa", water: false, mountains: true, snow: false, storm: false, night: false },
+    water: { ground: "#d5bd77", foliage: "#467f48", sky: "#72bde2", water: true, mountains: false, snow: false, storm: false, night: false },
+  } as const;
+  const scene = typeScene[primaryType as keyof typeof typeScene] ?? typeScene.normal;
+  const isNightBiome = isEvening || scene.night;
+  const isLushBiome = primaryType === "grass" || primaryType === "bug";
+  const isDesertBiome = primaryType === "ground" || primaryType === "rock";
+  const isVolcanicBiome = primaryType === "fire";
+  const isCalmNightBiome = scene.night && !scene.storm;
+  const denseForest = primaryType === "grass" || primaryType === "bug" || habitat === "forest" || habitat === "rare";
+  const hasCountryRoad = !scene.water && primaryType !== "cave";
+  const hasCottage = !scene.water && primaryType !== "cave" && !scene.mountains;
   const trees = (denseForest
     ? [
         [-6.1, -7.6, 1.28], [-5.0, -8.5, 1.06], [-4.1, -10.2, 1.42],
@@ -1738,23 +1884,27 @@ const ScanEnvironment = memo(function ScanEnvironment({
     <group>
       <Sky
         distance={450000}
-        inclination={isEvening ? 0.53 : 0.5}
+        inclination={isNightBiome ? 0.53 : 0.5}
         azimuth={0.18}
-        rayleigh={isEvening ? 1.2 : 2}
-        sunPosition={isEvening ? [-5, 0.35, -6] : [4, 2, -6]}
+        rayleigh={isNightBiome ? 1.2 : scene.storm ? 0.75 : 2}
+        sunPosition={isNightBiome ? [-5, 0.35, -6] : scene.storm ? [-3, 1.1, -6] : [4, 2, -6]}
       />
-      <Cloud
-        position={[-3.2, 2.8, -5.5]}
-        scale={1.4}
-        speed={0.12}
-        opacity={isWetWeather ? 0.9 : isEvening ? 0.52 : 0.72}
-      />
-      <Cloud
-        position={[2.6, 3.3, -6.8]}
-        scale={1.1}
-        speed={0.08}
-        opacity={isWetWeather ? 0.82 : isEvening ? 0.42 : 0.6}
-      />
+      {isCalmNightBiome ? <MoonlitSky /> : (
+        <>
+          <Cloud
+            position={[-4.1, 4.2, -10.5]}
+            scale={0.78}
+            speed={0.05}
+            opacity={scene.storm ? 0.42 : isWetWeather ? 0.38 : 0.28}
+          />
+          <Cloud
+            position={[3.9, 4.8, -12.8]}
+            scale={0.62}
+            speed={0.04}
+            opacity={scene.storm ? 0.34 : isWetWeather ? 0.28 : 0.2}
+          />
+        </>
+      )}
       <mesh position={[0, -3.72, -9.2]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
         <planeGeometry args={[50, 48, 1, 1]} />
         <meshStandardMaterial color={scene.ground} roughness={1} />
@@ -1785,7 +1935,7 @@ const ScanEnvironment = memo(function ScanEnvironment({
           </mesh>
         </group>
       ) : null}
-      {trees.map((tree, index) => (
+      {!isDesertBiome && !isVolcanicBiome && trees.map((tree, index) => (
         <LandscapeTree
           foliage={scene.foliage}
           index={index}
@@ -1793,13 +1943,13 @@ const ScanEnvironment = memo(function ScanEnvironment({
           position={tree}
         />
       ))}
-      {bushes.map(([x, z, scale]) => (
+      {!isDesertBiome && !isVolcanicBiome && bushes.map(([x, z, scale]) => (
         <mesh key={`bush-${x}-${z}`} position={[x, -3.3, z]} scale={scale}>
           <dodecahedronGeometry args={[1, 0]} />
           <meshStandardMaterial color={scene.foliage} flatShading roughness={1} />
         </mesh>
       ))}
-      {wildflowers.map(([x, z], index) => (
+      {isLushBiome && wildflowers.map(([x, z], index) => (
         <group key={`flower-${x}-${z}`} position={[x, -3.48, z]}>
           <mesh position={[0, 0.12, 0]}>
             <cylinderGeometry args={[0.012, 0.02, 0.24, 4]} />
@@ -1811,7 +1961,7 @@ const ScanEnvironment = memo(function ScanEnvironment({
           </mesh>
         </group>
       ))}
-      {wildflowerPatches.map(([x, z], index) => (
+      {isLushBiome && wildflowerPatches.map(([x, z], index) => (
         <group key={`flower-patch-${x}-${z}`} position={[x, -3.48, z]}>
           {[-0.15, 0, 0.15].map((offset, flowerIndex) => (
             <group key={offset} position={[offset, flowerIndex === 1 ? 0.04 : 0, flowerIndex === 1 ? 0.08 : -0.05]}>
@@ -1854,16 +2004,34 @@ const ScanEnvironment = memo(function ScanEnvironment({
         <group position={[0.7, -2.18, -12.8]}>
           <mesh position={[-3.5, 0.55, 0]} scale={[2.4, 2.8, 1.5]}>
             <coneGeometry args={[1, 1.8, 6]} />
-            <meshStandardMaterial color="#66736a" flatShading roughness={1} />
+            <meshStandardMaterial color={scene.snow ? "#d8e9ef" : isVolcanicBiome ? "#3f3032" : "#66736a"} flatShading roughness={1} />
           </mesh>
           <mesh position={[0.25, 0.9, -0.5]} scale={[3.1, 3.9, 1.8]}>
             <coneGeometry args={[1, 1.8, 6]} />
-            <meshStandardMaterial color="#59675f" flatShading roughness={1} />
+            <meshStandardMaterial color={scene.snow ? "#b9d4df" : isVolcanicBiome ? "#35272a" : "#59675f"} flatShading roughness={1} />
           </mesh>
           <mesh position={[3.75, 0.4, 0]} scale={[1.9, 2.3, 1.3]}>
             <coneGeometry args={[1, 1.8, 6]} />
-            <meshStandardMaterial color="#71806d" flatShading roughness={1} />
+            <meshStandardMaterial color={scene.snow ? "#dfeff2" : isVolcanicBiome ? "#493337" : "#71806d"} flatShading roughness={1} />
           </mesh>
+          {scene.snow ? <mesh position={[0.25, 3.2, -0.5]} scale={[1.55, 0.65, 1.02]}>
+            <coneGeometry args={[1, 1.2, 6]} />
+            <meshStandardMaterial color="#f5fbff" flatShading roughness={0.96} />
+          </mesh> : null}
+          {isVolcanicBiome ? <mesh position={[0.25, 2.35, 0.42]} rotation={[Math.PI / 2, 0, 0]}>
+            <circleGeometry args={[0.44, 18]} />
+            <meshBasicMaterial color="#ff6a2c" toneMapped={false} />
+          </mesh> : null}
+        </group>
+      ) : null}
+      {isDesertBiome ? (
+        <group position={[-2.25, -2.55, -12.4]} rotation={[0, -0.12, 0]}>
+          {[[0, 1.65], [2.45, 1.05], [-2.1, 0.86]].map(([x, scale], index) => (
+            <mesh key={index} position={[x, 0.25, -index * 0.34]} scale={scale}>
+              <coneGeometry args={[1.1, 1.85, 4]} />
+              <meshStandardMaterial color={index === 0 ? "#d8b978" : "#c8a96e"} flatShading roughness={1} />
+            </mesh>
+          ))}
         </group>
       ) : null}
       {hasCottage ? (
@@ -1882,7 +2050,7 @@ const ScanEnvironment = memo(function ScanEnvironment({
           </mesh>
           <mesh position={[-0.72, 0.12, 0.88]}>
             <boxGeometry args={[0.44, 0.42, 0.05]} />
-            <meshStandardMaterial color={isEvening ? "#ffd47a" : "#7bbbd0"} emissive={isEvening ? "#d89431" : "#000000"} emissiveIntensity={isEvening ? 0.8 : 0} />
+            <meshStandardMaterial color={isNightBiome ? "#ffd47a" : "#7bbbd0"} emissive={isNightBiome ? "#d89431" : "#000000"} emissiveIntensity={isNightBiome ? 0.8 : 0} />
           </mesh>
         </group>
       ) : null}
@@ -1895,27 +2063,19 @@ const ScanEnvironment = memo(function ScanEnvironment({
           <cylinderGeometry args={[0.5, 0.74, 0.28, 10]} />
           <meshStandardMaterial color={scene.foliage} roughness={0.9} />
         </mesh>
-        <Html
-          center
-          position={[0, 0.35, 1.18]}
-          scale={0.48}
-          style={{ pointerEvents: "none" }}
-          transform
-        >
-          <AnimatedScanTarget
-            animatedSpriteUrl={animatedSpriteUrl}
-            concealed={concealed}
-            key={animatedSpriteUrl ?? spriteUrl}
-            spriteUrl={spriteUrl}
-          />
-        </Html>
+        <ScanTargetSprite
+          animatedSpriteUrl={animatedSpriteUrl}
+          concealed={concealed}
+          spriteUrl={spriteUrl}
+        />
       </group>
-      <Rainfall enabled={isWetWeather} />
+      {scene.snow ? <Snowfall /> : null}
+      <Rainfall enabled={isWetWeather && !isNightBiome && !scene.snow && !scene.storm} />
     </group>
   );
 });
 
-function AnimatedScanTarget({
+function ScanTargetSprite({
   animatedSpriteUrl,
   concealed,
   spriteUrl,
@@ -1924,27 +2084,29 @@ function AnimatedScanTarget({
   concealed: boolean;
   spriteUrl: string | null;
 }) {
-  const fallbackUrl = spriteUrl ?? getSpriteUrl(25);
-  const preferredUrl = animatedSpriteUrl ?? fallbackUrl;
-  const [failedAnimatedUrl, setFailedAnimatedUrl] = useState<string | null>(null);
-  const displayUrl =
-    failedAnimatedUrl === preferredUrl ? fallbackUrl : preferredUrl;
-
   return (
-    <img
-      alt={concealed ? "Mystery Pokemon silhouette" : "Pokemon scan target"}
-      draggable={false}
-      onError={() => setFailedAnimatedUrl(preferredUrl)}
-      src={displayUrl}
-      style={{
-        display: "block",
-        filter: concealed ? "brightness(0)" : "none",
-        height: 168,
-        imageRendering: "pixelated",
-        objectFit: "contain",
-        width: 168,
-      }}
-    />
+    <Html
+      center
+      position={[0, 0.55, 0.9]}
+      scale={0.46}
+      style={{ pointerEvents: "none" }}
+      transform
+      zIndexRange={[2, 0]}
+    >
+      <img
+        alt=""
+        draggable={false}
+        src={animatedSpriteUrl ?? spriteUrl ?? getSpriteUrl(25)}
+        style={{
+          display: "block",
+          filter: concealed ? "brightness(0)" : "none",
+          height: "150px",
+          imageRendering: "pixelated",
+          objectFit: "contain",
+          width: "150px",
+        }}
+      />
+    </Html>
   );
 }
 
@@ -1984,15 +2146,7 @@ function PokedexModel({
   }, [scene]);
 
   useEffect(() => {
-    const finish: Record<PokedexSkinId, { color: [number, number, number]; metalness: number; roughness: number }> = {
-      classic: { color: [0.711, 0.006, 0.031], metalness: 0.08, roughness: 0.45 },
-      midnight: { color: [0.045, 0.09, 0.2], metalness: 0.38, roughness: 0.28 },
-      neon: { color: [0.29, 0.045, 0.8], metalness: 0.48, roughness: 0.2 },
-      forest: { color: [0.06, 0.42, 0.14], metalness: 0.1, roughness: 0.52 },
-      ocean: { color: [0.02, 0.34, 0.7], metalness: 0.3, roughness: 0.26 },
-      gold: { color: [0.86, 0.48, 0.035], metalness: 0.75, roughness: 0.21 },
-    };
-    const selectedFinish = finish[skin];
+    const selectedFinish = POKEDEX_SKIN_BY_ID.get(skin) ?? POKEDEX_SKIN_BY_ID.get("classic")!;
 
     skinnedScene.traverse((object) => {
       if (!(object instanceof Mesh)) {
@@ -2006,7 +2160,11 @@ function PokedexModel({
           material instanceof MeshStandardMaterial &&
           (material.name === "Red" || material.name === "Pinkish")
         ) {
-          material.color.setRGB(...selectedFinish.color);
+          material.color.setHSL(
+            selectedFinish.hue / 360,
+            selectedFinish.saturation / 100,
+            selectedFinish.lightness / 100,
+          );
           material.metalness = selectedFinish.metalness;
           material.roughness = selectedFinish.roughness;
           material.needsUpdate = true;
@@ -2044,15 +2202,23 @@ function PokedexModel({
   );
 }
 
-function WorldConfetti({ level, settled = false }: { level: number; settled?: boolean }) {
+function WorldConfetti({
+  level,
+  seed,
+  settled = false,
+}: {
+  level: number;
+  seed: number;
+  settled?: boolean;
+}) {
   const particleCount = useMemo(() => {
     const hardwareThreads = navigator.hardwareConcurrency ?? 4;
     const adaptiveCap =
-      hardwareThreads >= 8 ? 60_000 : hardwareThreads >= 6 ? 35_000 : 18_000;
+      hardwareThreads >= 8 ? 20_000 : hardwareThreads >= 6 ? 12_000 : 6_000;
 
     return settled
-      ? Math.min(6_000, 500 + level * 10)
-      : Math.min(adaptiveCap, 1_000 + level * 80);
+      ? Math.min(1_200, 120 + level * 2)
+      : Math.min(adaptiveCap, 600 + level * 28);
   }, [level, settled]);
   const particleSystem = useMemo(() => {
     const geometry = new BufferGeometry();
@@ -2060,6 +2226,8 @@ function WorldConfetti({ level, settled = false }: { level: number; settled?: bo
     const origins = new Float32Array(particleCount * 3);
     const velocities = new Float32Array(particleCount * 3);
     const landingTimes = new Float32Array(particleCount);
+    const particleSizes = new Float32Array(particleCount);
+    const spawnDelays = new Float32Array(particleCount);
     const emitters: Array<[number, number, number]> = [
       [-0.8, -0.5, 0.5],
       [1.25, -0.7, -0.4],
@@ -2076,17 +2244,23 @@ function WorldConfetti({ level, settled = false }: { level: number; settled?: bo
       [1, 0.55, 0.16],
     ];
 
+    const random = (index: number, salt: number) => {
+      const value = Math.sin(
+        (index + 1) * (12.9898 + salt * 78.233) + seed * 0.000001,
+      ) * 43_758.5453;
+      return value - Math.floor(value);
+    };
+
     for (let index = 0; index < particleCount; index += 1) {
       const offset = index * 3;
-      const emitter = emitters[index % emitters.length];
-      const hue = palette[index % palette.length];
-      // A low-cost deterministic spread keeps dense bursts evenly distributed.
-      const angle = (index * 2.399963229728653) % (Math.PI * 2);
-      const speed = 1.5 + ((index * 37) % 100) / 27;
-      const verticalSpeed = 2.4 + ((index * 53) % 100) / 16;
-      const originX = emitter[0] + Math.cos(index * 0.71) * 0.22;
-      const originY = emitter[1] + ((index % 9) - 4) * 0.035;
-      const originZ = emitter[2] + Math.sin(index * 0.47) * 0.22;
+      const emitter = emitters[Math.floor(random(index, 1) * emitters.length)];
+      const hue = palette[Math.floor(random(index, 2) * palette.length)];
+      const angle = random(index, 3) * Math.PI * 2;
+      const speed = 1.2 + random(index, 4) * 3.8;
+      const verticalSpeed = 2.1 + random(index, 5) * 6.5;
+      const originX = emitter[0] + (random(index, 6) - 0.5) * 0.56;
+      const originY = emitter[1] + (random(index, 7) - 0.5) * 0.28;
+      const originZ = emitter[2] + (random(index, 8) - 0.5) * 0.56;
       const impactTime =
         (verticalSpeed + Math.sqrt(verticalSpeed ** 2 + 2 * 4.8 * (originY + 3.64))) /
         4.8;
@@ -2098,15 +2272,19 @@ function WorldConfetti({ level, settled = false }: { level: number; settled?: bo
       );
       colors.set(hue, offset);
       landingTimes[index] = Math.min(CONFETTI_DURATION_SECONDS, impactTime);
+      particleSizes[index] = 0.65 + random(index, 9) * 1.35;
+      spawnDelays[index] = settled ? 0 : random(index, 10) * 2.4;
     }
 
     geometry.setAttribute("position", new Float32BufferAttribute(origins, 3));
     geometry.setAttribute("origin", new Float32BufferAttribute(origins, 3));
     geometry.setAttribute("velocity", new Float32BufferAttribute(velocities, 3));
     geometry.setAttribute("landingTime", new Float32BufferAttribute(landingTimes, 1));
+    geometry.setAttribute("particleSize", new Float32BufferAttribute(particleSizes, 1));
+    geometry.setAttribute("spawnDelay", new Float32BufferAttribute(spawnDelays, 1));
     geometry.setAttribute("color", new Float32BufferAttribute(colors, 3));
     return { geometry };
-  }, [particleCount]);
+  }, [particleCount, seed, settled]);
   const startedAt = useRef<number | null>(settled ? 0 : null);
   const materialRef = useRef<ShaderMaterial>(null);
 
@@ -2131,7 +2309,7 @@ function WorldConfetti({ level, settled = false }: { level: number; settled?: bo
         depthWrite={false}
         transparent
         fragmentShader={
-          "varying vec3 vColor; void main() { if (length(gl_PointCoord - vec2(0.5)) > 0.5) discard; gl_FragColor = vec4(vColor, 0.94); }"
+          "varying vec3 vColor; void main() { float angle = vColor.r * 6.2831853 + vColor.g * 2.1; float c = cos(angle); float s = sin(angle); vec2 p = gl_PointCoord - vec2(0.5); p = mat2(c, -s, s, c) * p; vec2 halfSize = vec2(0.34, 0.115); vec2 edge = abs(p) - halfSize; float distanceToPaper = length(max(edge, 0.0)) + min(max(edge.x, edge.y), 0.0); float alpha = 1.0 - smoothstep(0.008, 0.036, distanceToPaper); if (alpha < 0.02) discard; float highlight = 0.84 + 0.16 * smoothstep(-halfSize.y, halfSize.y, p.y); gl_FragColor = vec4(vColor * highlight, alpha * 0.96); }"
         }
         ref={materialRef}
         uniforms={{
@@ -2143,7 +2321,7 @@ function WorldConfetti({ level, settled = false }: { level: number; settled?: bo
           casingMax: { value: new Vector3(...POKEDEX_CASING_BOUNDS.max) },
         }}
         vertexShader={
-          "attribute vec3 origin; attribute vec3 velocity; attribute vec3 color; attribute float landingTime; uniform float elapsed; uniform vec3 modelPosition; uniform float modelRotationY; uniform float modelScale; uniform vec3 casingMin; uniform vec3 casingMax; varying vec3 vColor; vec3 toLocal(vec3 worldPoint) { vec3 point = (worldPoint - modelPosition) / modelScale; float c = cos(-modelRotationY); float s = sin(-modelRotationY); return vec3(c * point.x + s * point.z, point.y, -s * point.x + c * point.z); } vec3 toWorld(vec3 localPoint) { float c = cos(modelRotationY); float s = sin(modelRotationY); return modelPosition + modelScale * vec3(c * localPoint.x + s * localPoint.z, localPoint.y, -s * localPoint.x + c * localPoint.z); } void main() { float t = min(elapsed, landingTime); vec3 worldPosition = origin + velocity * t; worldPosition.y = max(-3.64, origin.y + velocity.y * t - 2.4 * t * t); vec3 localPosition = toLocal(worldPosition); bool insideCasing = localPosition.x > casingMin.x && localPosition.x < casingMax.x && localPosition.y > casingMin.y && localPosition.y < casingMax.y && localPosition.z < casingMax.z && localPosition.z > casingMin.z - 2.5; if (insideCasing) { localPosition.z = casingMax.z + 0.025; localPosition.x += sin(origin.y * 17.0 + origin.z * 11.0) * 0.035; localPosition.y += cos(origin.x * 13.0 + origin.z * 7.0) * 0.022; worldPosition = toWorld(localPosition); } vec4 mvPosition = modelViewMatrix * vec4(worldPosition, 1.0); gl_Position = projectionMatrix * mvPosition; gl_PointSize = clamp(13.0 * (180.0 / -mvPosition.z), 3.0, 16.0); vColor = color; }"
+          "attribute vec3 origin; attribute vec3 velocity; attribute vec3 color; attribute float landingTime; attribute float particleSize; attribute float spawnDelay; uniform float elapsed; uniform vec3 modelPosition; uniform float modelRotationY; uniform float modelScale; uniform vec3 casingMin; uniform vec3 casingMax; varying vec3 vColor; vec3 toLocal(vec3 worldPoint) { vec3 point = (worldPoint - modelPosition) / modelScale; float c = cos(-modelRotationY); float s = sin(-modelRotationY); return vec3(c * point.x + s * point.z, point.y, -s * point.x + c * point.z); } vec3 toWorld(vec3 localPoint) { float c = cos(modelRotationY); float s = sin(modelRotationY); return modelPosition + modelScale * vec3(c * localPoint.x + s * localPoint.z, localPoint.y, -s * localPoint.x + c * localPoint.z); } void main() { float t = min(max(0.0, elapsed - spawnDelay), landingTime); vec3 worldPosition = origin + velocity * t; worldPosition.y = max(-3.64, origin.y + velocity.y * t - 2.4 * t * t); vec3 localPosition = toLocal(worldPosition); bool insideCasing = localPosition.x > casingMin.x && localPosition.x < casingMax.x && localPosition.y > casingMin.y && localPosition.y < casingMax.y && localPosition.z < casingMax.z && localPosition.z > casingMin.z - 2.5; if (insideCasing) { localPosition.z = casingMax.z + 0.025; localPosition.x += sin(origin.y * 17.0 + origin.z * 11.0) * 0.035; localPosition.y += cos(origin.x * 13.0 + origin.z * 7.0) * 0.022; worldPosition = toWorld(localPosition); } vec4 mvPosition = modelViewMatrix * vec4(worldPosition, 1.0); gl_Position = projectionMatrix * mvPosition; gl_PointSize = clamp(15.0 * particleSize * (180.0 / -mvPosition.z), 3.0, 18.0); vColor = color; }"
         }
       />
     </points>
@@ -2390,16 +2568,13 @@ function App() {
   );
   const [mode, setMode] = useState<AppMode>(initialMode);
   const [query, setQuery] = useState(INITIAL_QUERY);
-  const [initialGamePokemonId] = useState<number | null>(() =>
-    initialMode === "game"
-      ? getRandomGamePokemonId(selectedGenerations, savedRecentGamePokemonIds)
-      : null,
-  );
+  const [initialGamePokemonId] = useState<number | null>(null);
   const [submittedQuery, setSubmittedQuery] = useState(
     initialGamePokemonId ? String(initialGamePokemonId) : INITIAL_QUERY,
   );
   const [guess, setGuess] = useState("");
   const [roundResult, setRoundResult] = useState<RoundResult>("guessing");
+  const [isGamePaused, setIsGamePaused] = useState(false);
   const [gameStats, setGameStats] = useState<GameStats>(() => ({
     score: getSavedGameScore(),
     streak: 0,
@@ -2443,6 +2618,9 @@ function App() {
   >("idle");
   const [voiceMessage, setVoiceMessage] = useState("");
   const [voiceEnabled, setVoiceEnabled] = useState(false);
+  const [isIntroMuted, setIsIntroMuted] = useState(
+    () => window.localStorage.getItem(INTRO_MUTED_STORAGE_KEY) === "true",
+  );
   const [voicePokemonIndex, setVoicePokemonIndex] = useState<
     VoicePokemonCandidate[]
   >([]);
@@ -2451,6 +2629,7 @@ function App() {
   const guessRef = useRef("");
   const recognitionRef = useRef<VoiceRecognition | null>(null);
   const hasCountedCurrentRoundRef = useRef(false);
+  const hasInitializedGameRef = useRef(false);
   const confettiLevelRef = useRef(confettiLevel);
   const recentGamePokemonIdsRef = useRef<number[]>(
     initialGamePokemonId
@@ -2468,6 +2647,7 @@ function App() {
     setGuess("");
     guessRef.current = "";
     setRoundResult("guessing");
+    setIsGamePaused(false);
     setNextRoundSeconds(null);
     setRoundSecondsRemaining(ROUND_TIME_LIMIT_SECONDS);
     const selectedIds = getPokemonIdsForGenerations(generationIds);
@@ -2497,6 +2677,13 @@ function App() {
     setHasBoughtExtraTime(false);
     setIsShinyRound(Math.random() < SHINY_ROUND_CHANCE);
   }, [capturedPokemonIds, hasUncaughtRadar, selectedGenerations]);
+
+  useEffect(() => {
+    if (mode === "game" && !hasInitializedGameRef.current) {
+      hasInitializedGameRef.current = true;
+      startNewRound();
+    }
+  }, [mode, startNewRound]);
 
   useEffect(() => {
     saveRecentGamePokemonIds(recentGamePokemonIdsRef.current);
@@ -2571,6 +2758,12 @@ function App() {
     );
   }, [confettiLevel]);
 
+  // Settled confetti deliberately lives only for the current session. Persisting it
+  // made a reload reconstruct old bursts before the player had answered correctly.
+  useEffect(() => {
+    window.localStorage.removeItem("pokedex:settled-confetti");
+  }, []);
+
   useEffect(() => {
     window.localStorage.setItem(NAME_REVEAL_UPGRADE_STORAGE_KEY, String(nameRevealLevel));
   }, [nameRevealLevel]);
@@ -2581,6 +2774,7 @@ function App() {
   useEffect(() => { window.localStorage.setItem(POKEDEX_SKINS_STORAGE_KEY, JSON.stringify([...ownedSkins])); }, [ownedSkins]);
   useEffect(() => { window.localStorage.setItem(POKEDEX_EQUIPPED_SKIN_STORAGE_KEY, equippedSkin); }, [equippedSkin]);
   useEffect(() => { window.localStorage.setItem(UNCAUGHT_RADAR_STORAGE_KEY, String(hasUncaughtRadar)); }, [hasUncaughtRadar]);
+  useEffect(() => { window.localStorage.setItem(INTRO_MUTED_STORAGE_KEY, String(isIntroMuted)); }, [isIntroMuted]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -2665,7 +2859,7 @@ function App() {
 
   useEffect(() => {
     if (
-      mode !== "game" ||
+      mode !== "game" || isGamePaused ||
       roundResult !== "guessing" ||
       pokemonState.status !== "ready" ||
       pokemonState.query !== submittedQuery.trim().toLowerCase()
@@ -2699,7 +2893,7 @@ function App() {
       cry.pause();
       cry.currentTime = 0;
     };
-  }, [isIntroComplete, mode, pokemonState, roundResult, submittedQuery]);
+  }, [isGamePaused, isIntroComplete, mode, pokemonState, roundResult, submittedQuery]);
 
   const isGameRoundRevealed =
     roundResult !== "guessing";
@@ -2737,11 +2931,11 @@ function App() {
       window.clearTimeout(timeout);
       window.clearTimeout(kickoff);
     };
-  }, [isGameRoundRevealed, mode, startNewRound]);
+  }, [isGameRoundRevealed, isGamePaused, mode, startNewRound]);
 
   useEffect(() => {
     if (
-      mode !== "game" ||
+      mode !== "game" || isGamePaused ||
       roundResult !== "guessing" ||
       pokemonState.status !== "ready" ||
       pokemonState.query !== submittedQuery.trim().toLowerCase()
@@ -2757,7 +2951,7 @@ function App() {
     return () => {
       window.clearInterval(interval);
     };
-  }, [mode, pokemonState, roundResult, submittedQuery, roundSecondsRemaining]);
+  }, [isGamePaused, mode, pokemonState, roundResult, submittedQuery, roundSecondsRemaining]);
 
   useEffect(() => {
     if (
@@ -2844,6 +3038,11 @@ function App() {
   const habitat =
     pokemonState.status === "ready" ? pokemonState.habitat : "rare";
   const isEvening = isEveningLocally();
+  const isNightEnvironment =
+    isEvening ||
+    typeNames.some((typeName) =>
+      ["dark", "ghost", "dragon", "poison", "psychic"].includes(typeName),
+    );
   const flavorText =
     pokemonState.status === "ready" &&
     (mode === "lookup" || isGameRoundRevealed)
@@ -2881,7 +3080,7 @@ function App() {
     setSelectedGenerations(nextGenerations);
   };
   const submitGuess = useCallback((submittedGuess = guessRef.current) => {
-    if (pokemonState.status !== "ready" || !submittedGuess.trim()) {
+    if (isGamePaused || pokemonState.status !== "ready" || !submittedGuess.trim()) {
       return;
     }
 
@@ -2900,8 +3099,10 @@ function App() {
       setOwnedSkins((currentSkins) => {
         const unownedSkins = POKEDEX_SKINS.filter((skin) => !currentSkins.has(skin.id));
         if (unownedSkins.length === 0) return currentSkins;
-        const reward = unownedSkins[Math.floor(Math.random() * unownedSkins.length)];
-        setWalletRewardMessage(`${reward.label} skin unlocked!`);
+        const totalWeight = unownedSkins.reduce((sum, skin) => sum + skin.weight, 0);
+        let roll = Math.random() * totalWeight;
+        const reward = unownedSkins.find((skin) => (roll -= skin.weight) <= 0) ?? unownedSkins[0];
+        setWalletRewardMessage(`${reward.rarity} skin unlocked: ${reward.label}!`);
         return new Set([...currentSkins, reward.id]);
       });
       if (confettiLevel > 0) {
@@ -2955,7 +3156,7 @@ function App() {
         correctAnswers: currentStats.correctAnswers + 1,
       };
     });
-  }, [confettiLevel, isShinyRound, pokemonState, roundSecondsRemaining]);
+  }, [confettiLevel, isGamePaused, isShinyRound, pokemonState, roundSecondsRemaining]);
   const buyExtraTime = () => {
     if (
       hasBoughtExtraTime ||
@@ -3021,6 +3222,7 @@ function App() {
   }, [selectedGenerations, voicePokemonIndex]);
   const canListenForVoiceGuess =
     mode === "game" &&
+    !isGamePaused &&
     roundResult === "guessing" &&
     pokemonState.status === "ready" &&
     isIntroComplete &&
@@ -3168,6 +3370,7 @@ function App() {
   ).length;
   const capturedPokemonPercentage =
     (selectedCapturedPokemonCount / selectedPokemonIds.length) * 100;
+  const equippedSkinDefinition = POKEDEX_SKIN_BY_ID.get(equippedSkin) ?? POKEDEX_SKIN_BY_ID.get("classic")!;
   const selectedGenerationLabel = GAME_GENERATIONS.filter((generation) =>
     selectedGenerations.includes(generation.id),
   )
@@ -3201,6 +3404,7 @@ function App() {
   return (
     <>
       <WhosThatPokemonIntro
+        isMuted={isIntroMuted}
         onComplete={() => setIsIntroComplete(true)}
         playbackKey={introPlaybackKey}
       />
@@ -3222,27 +3426,35 @@ function App() {
           {Array.from({ length: 8 }, (_, index) => <span key={index} />)}
         </div>
       ) : null}
-      <main className={`pokedex-app skin-${equippedSkin}${showShinyCelebration ? " is-shaking" : ""}`}>
+      <main
+        className={`pokedex-app skin-${equippedSkin}${showShinyCelebration ? " is-shaking" : ""}`}
+        style={{
+          "--skin-hue": equippedSkinDefinition.hue,
+          "--skin-saturation": `${equippedSkinDefinition.saturation}%`,
+          "--skin-lightness": `${equippedSkinDefinition.lightness}%`,
+        } as CSSProperties}
+      >
       <section className="viewer-shell" aria-label="Interactive Pokedex model">
         <Canvas shadows camera={VIEWER_CAMERA}>
-          <color attach="background" args={[isEvening ? "#2a3150" : "#8fc8ec"]} />
-          <ambientLight intensity={isEvening ? 0.75 : 1.35} />
+          <color attach="background" args={[isNightEnvironment ? "#141b36" : "#8fc8ec"]} />
+          <ambientLight intensity={isNightEnvironment ? 0.75 : 1.35} />
           <directionalLight
             castShadow
-            color={isEvening ? "#efab72" : "#ffffff"}
-            position={isEvening ? [-5, 1, 3] : [4, 4, 3]}
-            intensity={isEvening ? 1.8 : 2.4}
+            color={isNightEnvironment ? "#efab72" : "#ffffff"}
+            position={isNightEnvironment ? [-5, 1, 3] : [4, 4, 3]}
+            intensity={isNightEnvironment ? 1.8 : 2.4}
           />
           <directionalLight
-            color={isEvening ? "#6f89d9" : "#ffffff"}
+            color={isNightEnvironment ? "#6f89d9" : "#ffffff"}
             position={[-3, 2, -4]}
-            intensity={isEvening ? 0.65 : 0.9}
+            intensity={isNightEnvironment ? 0.65 : 0.9}
           />
           <Suspense fallback={null}>
             {settledConfetti.map((burst) => (
               <WorldConfetti
                 key={`settled-confetti-${burst.id}`}
                 level={burst.level}
+                seed={burst.id}
                 settled
               />
             ))}
@@ -3250,6 +3462,7 @@ function App() {
               <WorldConfetti
                 key={`world-confetti-${confettiLevel}-${confettiEventId}`}
                 level={confettiLevel}
+                seed={confettiEventId}
               />
             ) : null}
             <ScanEnvironment
@@ -3257,7 +3470,13 @@ function App() {
               concealed={mode === "game" && !isGameRoundRevealed}
               habitat={habitat}
               isEvening={isEvening}
+              key={
+                mode === "game" && !isGameRoundRevealed
+                  ? "scan-target-silhouette"
+                  : "scan-target-visible"
+              }
               spriteUrl={spriteUrl}
+              typeNames={typeNames}
             />
             <PokedexModel
               animatedSpriteUrl={animatedSpriteUrl}
@@ -3353,6 +3572,19 @@ function App() {
                   <dd>{isGameRoundRevealed ? "—" : `${roundSecondsRemaining}s`}</dd>
                 </div>
               </dl>
+              <button className="hint-button" onClick={() => setIsGamePaused((paused) => !paused)} type="button">
+                {isGamePaused ? "Resume round" : "Pause round"}
+              </button>
+              <button
+                aria-label={isIntroMuted ? "Unmute Who's That Pokemon intro" : "Mute Who's That Pokemon intro"}
+                aria-pressed={isIntroMuted}
+                className="hint-button"
+                onClick={() => setIsIntroMuted((muted) => !muted)}
+                type="button"
+              >
+                {isIntroMuted ? "Unmute intro" : "Mute intro"}
+              </button>
+              {isGamePaused ? <p className="wallet-reward">Round paused — timer and guesses are frozen.</p> : null}
               {walletRewardMessage ? (
                 <p aria-live="polite" className="wallet-reward">
                   {walletRewardMessage}
@@ -3383,8 +3615,28 @@ function App() {
               <div className="game-utilities">
                 <button className="hint-button" disabled={hasUncaughtRadar || gameStats.score < UNCAUGHT_RADAR_COST} onClick={buyUncaughtRadar} type="button">{hasUncaughtRadar ? "Uncaught Radar active" : `Buy Uncaught Radar (${UNCAUGHT_RADAR_COST} pts)`}</button>
                 <div className="skin-shop" aria-label="Pokedex skin shop">
-                  <strong>Pokédex skins</strong>
-                  {POKEDEX_SKINS.map((skin) => <button className="hint-button" disabled={!ownedSkins.has(skin.id) && gameStats.score < POKEDEX_SKIN_COST} key={skin.id} onClick={() => buyOrEquipSkin(skin.id)} type="button">{equippedSkin === skin.id ? `${skin.label} equipped` : ownedSkins.has(skin.id) ? `Equip ${skin.label}` : `${skin.label} (${POKEDEX_SKIN_COST} pts)`}</button>)}
+                  <div className="skin-shop-heading">
+                    <strong>Pokédex skin collection</strong>
+                    <span>{ownedSkins.size} / {POKEDEX_SKINS.length} unlocked</span>
+                  </div>
+                  <div aria-label={`${ownedSkins.size} of ${POKEDEX_SKINS.length} skins unlocked`} className="skin-progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={POKEDEX_SKINS.length} aria-valuenow={ownedSkins.size}>
+                    <span style={{ width: `${(ownedSkins.size / POKEDEX_SKINS.length) * 100}%` }} />
+                  </div>
+                  <p className="skin-shop-copy">Win correct rounds for weighted drops, or spend {POKEDEX_SKIN_COST} points to unlock any skin.</p>
+                  <details className="skin-catalog">
+                    <summary>Browse all {POKEDEX_SKINS.length} skins</summary>
+                    <div className="skin-grid">
+                      {POKEDEX_SKINS.map((skin) => {
+                        const owned = ownedSkins.has(skin.id);
+                        return <button aria-pressed={equippedSkin === skin.id} className={`skin-card rarity-${skin.rarity.toLowerCase()}${equippedSkin === skin.id ? " is-equipped" : ""}`} disabled={!owned && gameStats.score < POKEDEX_SKIN_COST} key={skin.id} onClick={() => buyOrEquipSkin(skin.id)} type="button">
+                          <span className="skin-swatch" style={{ background: `hsl(${skin.hue} ${skin.saturation}% ${skin.lightness}%)` }} />
+                          <span className="skin-card-name">{skin.label}</span>
+                          <span className="skin-rarity">{skin.rarity}</span>
+                          <span className="skin-card-action">{equippedSkin === skin.id ? "Equipped" : owned ? "Equip" : `${POKEDEX_SKIN_COST} pts`}</span>
+                        </button>;
+                      })}
+                    </div>
+                  </details>
                 </div>
                 <button
                   aria-haspopup="dialog"
