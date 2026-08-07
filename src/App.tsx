@@ -1,5 +1,5 @@
 /** biome-ignore-all lint/a11y/noStaticElementInteractions: <explanation> */
-import { Cloud, Html, OrbitControls, Sky, useGLTF } from "@react-three/drei";
+import { Html, OrbitControls, Sky, useGLTF } from "@react-three/drei";
 import { Canvas, useFrame } from "@react-three/fiber";
 import {
   Suspense,
@@ -19,6 +19,15 @@ import {
   type PokedexSkin,
   type PokedexSkinId,
 } from "./skins";
+import {
+  formatPokemonName,
+  getAnimatedShinySpriteUrl,
+  getAnimatedSpriteUrl,
+  getPokemonQueryFromScan,
+  getShinySpriteUrl,
+  getSpriteUrl,
+  normalizePokemonName,
+} from "./pokemon";
 import {
   BufferGeometry,
   CanvasTexture,
@@ -238,10 +247,6 @@ const SHOW_D_PAD_DEBUG_OVERLAY = false;
 const FLAVOR_TEXT_FALLBACK = "No field notes available.";
 const SPRITE_RENDER_SIZE = 96;
 const SPRITE_HTML_SCALE = 0.15;
-const SPRITE_BASE_URL =
-  "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon";
-const ANIMATED_SPRITE_BASE_URL =
-  "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/versions/generation-v/black-white/animated";
 const NEXT_ROUND_DELAY_SECONDS = 3;
 const ROUND_TIME_LIMIT_SECONDS = 20;
 const MAX_ROUND_POINTS = 100;
@@ -274,6 +279,7 @@ const WHOSE_THAT_POKEMON_VIDEO_ID = "EE-xtCF3T94";
 const WHOSE_THAT_POKEMON_INTRO_SECONDS = 5;
 const WHOSE_THAT_POKEMON_FALLBACK_MS =
   (WHOSE_THAT_POKEMON_INTRO_SECONDS + 1) * 1_000;
+const KONAMI_CODE = ["ArrowUp", "ArrowUp", "ArrowDown", "ArrowDown", "ArrowLeft", "ArrowRight", "ArrowLeft", "ArrowRight", "KeyB", "KeyA"] as const;
 
 const GAME_GENERATIONS = [
   { id: 1, label: "Gen I", start: 1, end: 151 },
@@ -725,7 +731,6 @@ function CapturedPokemonCollection({
     </div>
   );
 }
-const POKEMON_SCAN_VALUE = /^(?:pokemon:)?([a-z0-9][a-z0-9-]{0,39})$/i;
 const TYPE_SCREEN_COLORS: Record<string, [string, string, string]> = {
   bug: ["#dce96f", "#789b20", "#193d20"],
   dark: ["#a18b93", "#4d3f52", "#171925"],
@@ -747,31 +752,6 @@ const TYPE_SCREEN_COLORS: Record<string, [string, string, string]> = {
   water: ["#b8ecff", "#4299d5", "#174b7e"],
 };
 
-function getPokemonQueryFromScan(rawValue: string) {
-  const value = rawValue.trim();
-  const directMatch = value.match(POKEMON_SCAN_VALUE);
-
-  if (directMatch) {
-    return directMatch[1].toLowerCase();
-  }
-
-  try {
-    const url = new URL(value);
-    const pathMatch = url.pathname.match(/^\/api\/v2\/pokemon\/([^/]+)\/?$/i);
-
-    if (url.hostname === "pokeapi.co" && pathMatch) {
-      const decodedValue = decodeURIComponent(pathMatch[1]);
-      const urlMatch = decodedValue.match(POKEMON_SCAN_VALUE);
-
-      return urlMatch ? urlMatch[1].toLowerCase() : null;
-    }
-  } catch {
-    // The scanned value is not a URL.
-  }
-
-  return null;
-}
-
 function normalizeFlavorText(flavorText: string) {
   return flavorText
     .replace(/[\n\r\t\f]+/g, " ")
@@ -789,22 +769,6 @@ function getEnglishFlavorText(species: PokemonSpecies) {
   const entry = entries[Math.floor(Math.random() * entries.length)];
 
   return entry ? normalizeFlavorText(entry.flavor_text) : FLAVOR_TEXT_FALLBACK;
-}
-
-function getSpriteUrl(pokemonId: number) {
-  return `${SPRITE_BASE_URL}/${pokemonId}.png`;
-}
-
-function getAnimatedSpriteUrl(pokemonId: number) {
-  return `${ANIMATED_SPRITE_BASE_URL}/${pokemonId}.gif`;
-}
-
-function getShinySpriteUrl(pokemonId: number) {
-  return `${SPRITE_BASE_URL}/shiny/${pokemonId}.png`;
-}
-
-function getAnimatedShinySpriteUrl(pokemonId: number) {
-  return `${ANIMATED_SPRITE_BASE_URL}/shiny/${pokemonId}.gif`;
 }
 
 function drawSkinPattern(
@@ -1143,14 +1107,6 @@ function WhosThatPokemonIntro({
   );
 }
 
-function normalizePokemonName(name: string) {
-  return name
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, "");
-}
-
 const VOICE_NAME_ALIASES: Record<string, string> = {
   "far fetched": "farfetchd",
   "far fetched d": "farfetchd",
@@ -1248,13 +1204,6 @@ function findVoicePokemonMatch(
         : 3;
 
   return bestMatch.distance <= allowedDistance ? bestMatch.candidate : null;
-}
-
-function formatPokemonName(name: string) {
-  return name
-    .split("-")
-    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
-    .join(" ");
 }
 
 function wrapCanvasText(
@@ -1782,6 +1731,7 @@ function MoonlitSky() {
   );
   return (
     <group>
+      <Aurora />
       <mesh position={[-4.9, 3.4, -11.8]}>
         <sphereGeometry args={[0.38, 12, 8]} />
         <meshBasicMaterial color="#dce8ff" toneMapped={false} />
@@ -1790,6 +1740,32 @@ function MoonlitSky() {
         <mesh key={index} position={[star.x, star.y, star.z]}>
           <sphereGeometry args={[star.size, 5, 4]} />
           <meshBasicMaterial color="#e6eeff" toneMapped={false} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+function Aurora() {
+  const auroraRef = useRef<Group>(null);
+  useFrame(({ clock }) => {
+    if (!auroraRef.current) return;
+    const time = clock.getElapsedTime();
+    auroraRef.current.rotation.z = Math.sin(time * 0.22) * 0.11;
+    auroraRef.current.children.forEach((curtain, index) => {
+      curtain.position.x = -3.4 + index * 1.15 + Math.sin(time * 0.7 + index * 0.9) * 0.28;
+      curtain.position.y = Math.sin(time * 0.9 + index * 1.4) * 0.38;
+      curtain.scale.y = 1.55 + Math.sin(time * 1.1 + index) * 0.38;
+    });
+  });
+  return (
+    <group ref={auroraRef} position={[0, 3.8, -15]}>
+      {[
+        [-3.4, "#66f7d2"], [-2.3, "#70a7ff"], [-1.1, "#f58bd9"], [0, "#b58cff"], [1.2, "#66f7d2"], [2.4, "#70a7ff"], [3.5, "#f58bd9"],
+      ].map(([x, color], index) => (
+        <mesh key={`${String(color)}-${index}`} position={[Number(x), Math.sin(index * 1.8) * 0.28, -index * 0.12]} rotation={[0.12, 0, index % 2 ? -0.12 : 0.12]} scale={[0.5, 2.1 + (index % 3) * 0.28, 1]}>
+          <planeGeometry args={[0.72, 1]} />
+          <meshBasicMaterial color={String(color)} transparent opacity={0.22} toneMapped={false} />
         </mesh>
       ))}
     </group>
@@ -2111,22 +2087,7 @@ const ScanEnvironment = memo(function ScanEnvironment({
         rayleigh={isNightBiome ? 1.2 : scene.storm ? 0.75 : 2}
         sunPosition={isNightBiome ? [-5, 0.35, -6] : scene.storm ? [-3, 1.1, -6] : [4, 2, -6]}
       />
-      {isCalmNightBiome ? <MoonlitSky /> : (
-        <>
-          <Cloud
-            position={[-4.1, 4.2, -10.5]}
-            scale={0.78}
-            speed={0.05}
-            opacity={scene.storm ? 0.42 : isWetWeather ? 0.38 : 0.28}
-          />
-          <Cloud
-            position={[3.9, 4.8, -12.8]}
-            scale={0.62}
-            speed={0.04}
-            opacity={scene.storm ? 0.34 : isWetWeather ? 0.28 : 0.2}
-          />
-        </>
-      )}
+      <MoonlitSky />
       {isCalmNightBiome ? <Fireflies /> : null}
       <mesh position={[0, -3.72, -9.2]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
         <planeGeometry args={[50, 48, 1, 1]} />
@@ -3029,6 +2990,7 @@ function App() {
   const [hasBoughtExtraTime, setHasBoughtExtraTime] = useState(false);
   const [confettiLevel, setConfettiLevel] = useState(getSavedConfettiLevel);
   const [showConfetti, setShowConfetti] = useState(false);
+  const konamiProgressRef = useRef(0);
   const [confettiEventId, setConfettiEventId] = useState(0);
   const [settledConfetti, setSettledConfetti] = useState<
     Array<{ id: number; level: number }>
@@ -3203,6 +3165,24 @@ function App() {
   }, [companionPokemonId]);
   useEffect(() => { window.localStorage.setItem(UNCAUGHT_RADAR_STORAGE_KEY, String(hasUncaughtRadar)); }, [hasUncaughtRadar]);
   useEffect(() => { window.localStorage.setItem(INTRO_MUTED_STORAGE_KEY, String(isIntroMuted)); }, [isIntroMuted]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const expectedKey = KONAMI_CODE[konamiProgressRef.current];
+      konamiProgressRef.current = event.code === expectedKey
+        ? konamiProgressRef.current + 1
+        : event.code === KONAMI_CODE[0] ? 1 : 0;
+      if (konamiProgressRef.current !== KONAMI_CODE.length) return;
+      konamiProgressRef.current = 0;
+      const burstId = Date.now();
+      playShinyFlourish();
+      setConfettiEventId(burstId);
+      setShowConfetti(true);
+      window.setTimeout(() => setShowConfetti(false), 5_000);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();

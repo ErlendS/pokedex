@@ -8,7 +8,7 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       reporter: ["text", "html"],
-      include: ["src/skins.ts"],
+      include: ["src/skins.ts", "src/pokemon.ts"],
     },
     environment: "jsdom",
   },
