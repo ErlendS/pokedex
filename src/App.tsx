@@ -2471,13 +2471,22 @@ function LegendarySkinDecal({ skin }: { skin: PokedexSkin }) {
         </>
       ) : (
         <>
-          {Array.from({ length: 5 }, (_, index) => (
-            <mesh key={index} position={[Math.cos(index * (Math.PI * 2 / 5)) * 0.047, Math.sin(index * (Math.PI * 2 / 5)) * 0.047, 0]} scale={[0.028, 0.05, 1]} rotation={[0, 0, index * (Math.PI * 2 / 5)]}>
-              <sphereGeometry args={[1, 8, 6]} />
-              <meshBasicMaterial color="#ff82bb" toneMapped={false} />
-            </mesh>
-          ))}
-          <mesh scale={0.024}><sphereGeometry args={[1, 8, 6]} /><meshBasicMaterial color="#ffd34d" toneMapped={false} /></mesh>
+          {Array.from({ length: 20 }, (_, flowerIndex) => {
+            const lane = (flowerIndex % 5) - 2;
+            const vertical = -0.13 + Math.floor(flowerIndex / 5) * 0.087;
+            const size = 0.46 + (flowerIndex % 3) * 0.1;
+            return (
+              <group key={flowerIndex} position={[lane * 0.055 + Math.sin(flowerIndex * 1.7) * 0.014, vertical, 0]} scale={size}>
+                {Array.from({ length: 5 }, (_, petalIndex) => (
+                  <mesh key={petalIndex} position={[Math.cos(petalIndex * (Math.PI * 2 / 5)) * 0.047, Math.sin(petalIndex * (Math.PI * 2 / 5)) * 0.047, 0]} scale={[0.028, 0.05, 1]} rotation={[0, 0, petalIndex * (Math.PI * 2 / 5)]}>
+                    <sphereGeometry args={[1, 8, 6]} />
+                    <meshBasicMaterial color={flowerIndex % 3 === 0 ? "#ffb1d1" : flowerIndex % 3 === 1 ? "#ff82bb" : "#dca6ff"} toneMapped={false} />
+                  </mesh>
+                ))}
+                <mesh scale={0.024}><sphereGeometry args={[1, 8, 6]} /><meshBasicMaterial color="#ffd34d" toneMapped={false} /></mesh>
+              </group>
+            );
+          })}
         </>
       )}
     </group>
