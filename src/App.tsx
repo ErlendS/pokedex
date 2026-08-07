@@ -103,6 +103,13 @@ const SPRITE_BASE_URL =
 const ANIMATED_SPRITE_BASE_URL =
   "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/versions/generation-v/black-white/animated";
 const NEXT_ROUND_DELAY_SECONDS = 3;
+const APP_MODE_STORAGE_KEY = "pokedex:mode";
+
+function getSavedAppMode(): AppMode {
+  const savedMode = window.localStorage.getItem(APP_MODE_STORAGE_KEY);
+
+  return savedMode === "game" ? "game" : "lookup";
+}
 const POKEMON_SCAN_VALUE = /^(?:pokemon:)?([a-z0-9][a-z0-9-]{0,39})$/i;
 const TYPE_SCREEN_COLORS: Record<string, [string, string, string]> = {
   bug: ["#dce96f", "#789b20", "#193d20"],
@@ -855,9 +862,12 @@ function PokemonScanner({ onScan }: { onScan: (query: string) => void }) {
 }
 
 function App() {
-  const [mode, setMode] = useState<AppMode>("lookup");
+  const initialMode = getSavedAppMode();
+  const [mode, setMode] = useState<AppMode>(initialMode);
   const [query, setQuery] = useState(INITIAL_QUERY);
-  const [submittedQuery, setSubmittedQuery] = useState(INITIAL_QUERY);
+  const [submittedQuery, setSubmittedQuery] = useState(
+    initialMode === "game" ? String(getRandomKantoPokemonId()) : INITIAL_QUERY,
+  );
   const [guess, setGuess] = useState("");
   const [roundResult, setRoundResult] = useState<RoundResult>("guessing");
   const [gameStats, setGameStats] = useState<GameStats>({
@@ -872,6 +882,10 @@ function App() {
     error: "",
     query: "",
   });
+
+  useEffect(() => {
+    window.localStorage.setItem(APP_MODE_STORAGE_KEY, mode);
+  }, [mode]);
 
   useEffect(() => {
     const controller = new AbortController();
