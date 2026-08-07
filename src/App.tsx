@@ -876,6 +876,7 @@ function App() {
     correctAnswers: 0,
   });
   const [nextRoundSeconds, setNextRoundSeconds] = useState<number | null>(null);
+  const guessInputRef = useRef<HTMLInputElement>(null);
   const [pokemonState, setPokemonState] = useState<PokemonState>({
     status: "loading",
     pokemon: null,
@@ -1022,6 +1023,16 @@ function App() {
       window.clearTimeout(kickoff);
     };
   }, [isGameRoundRevealed, mode]);
+
+  useEffect(() => {
+    if (
+      mode === "game" &&
+      roundResult === "guessing" &&
+      pokemonState.status === "ready"
+    ) {
+      guessInputRef.current?.focus();
+    }
+  }, [mode, pokemonState, roundResult]);
 
   const spriteUrl =
     pokemonState.status === "ready"
@@ -1251,6 +1262,7 @@ function App() {
                 name="guess"
                 onChange={(event) => setGuess(event.target.value)}
                 placeholder="Who's that Pokemon?"
+                ref={guessInputRef}
                 spellCheck="false"
                 value={guess}
               />
