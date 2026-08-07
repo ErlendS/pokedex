@@ -25,6 +25,7 @@ import {
   ShaderMaterial,
   Shape,
   SRGBColorSpace,
+  Vector3,
 } from "three";
 import "./App.css";
 
@@ -209,6 +210,13 @@ const VIEWER_CAMERA = {
   fov: 55,
 };
 const VIEWER_ORBIT_TARGET: [number, number, number] = [0, -0.9, -2.8];
+const POKEDEX_MODEL_POSITION: [number, number, number] = [0.7, -0.7, 0.35];
+const POKEDEX_MODEL_ROTATION_Y = -0.99;
+const POKEDEX_MODEL_SCALE = 2.15;
+const POKEDEX_CASING_BOUNDS = {
+  min: [-0.1763, -1.3027, -1.0062] as [number, number, number],
+  max: [0.7556, 1.1967, 1.0458] as [number, number, number],
+};
 const D_PAD_CENTER = {
   x: 0.078,
   y: -0.648,
@@ -1642,11 +1650,13 @@ function LandscapeTree({
 
 const ScanEnvironment = memo(function ScanEnvironment({
   animatedSpriteUrl,
+  concealed,
   habitat,
   isEvening,
   spriteUrl,
 }: {
   animatedSpriteUrl: string | null;
+  concealed: boolean;
   habitat: string;
   isEvening: boolean;
   spriteUrl: string | null;
@@ -1894,6 +1904,7 @@ const ScanEnvironment = memo(function ScanEnvironment({
         >
           <AnimatedScanTarget
             animatedSpriteUrl={animatedSpriteUrl}
+            concealed={concealed}
             key={animatedSpriteUrl ?? spriteUrl}
             spriteUrl={spriteUrl}
           />
@@ -1906,9 +1917,11 @@ const ScanEnvironment = memo(function ScanEnvironment({
 
 function AnimatedScanTarget({
   animatedSpriteUrl,
+  concealed,
   spriteUrl,
 }: {
   animatedSpriteUrl: string | null;
+  concealed: boolean;
   spriteUrl: string | null;
 }) {
   const fallbackUrl = spriteUrl ?? getSpriteUrl(25);
@@ -1919,13 +1932,13 @@ function AnimatedScanTarget({
 
   return (
     <img
-      alt="Pokemon scan target"
+      alt={concealed ? "Mystery Pokemon silhouette" : "Pokemon scan target"}
       draggable={false}
       onError={() => setFailedAnimatedUrl(preferredUrl)}
       src={displayUrl}
       style={{
         display: "block",
-        filter: "none",
+        filter: concealed ? "brightness(0)" : "none",
         height: 168,
         imageRendering: "pixelated",
         objectFit: "contain",
@@ -2004,7 +2017,11 @@ function PokedexModel({
 
   return (
     <>
-    <group position={[0.7, -0.7, 0.35]} rotation={[0, -0.99, 0]} scale={2.15}>
+    <group
+      position={POKEDEX_MODEL_POSITION}
+      rotation={[0, POKEDEX_MODEL_ROTATION_Y, 0]}
+      scale={POKEDEX_MODEL_SCALE}
+    >
       <primitive object={skinnedScene} />
       <PokedexScreen
         animatedSpriteUrl={animatedSpriteUrl}
@@ -2027,14 +2044,16 @@ function PokedexModel({
   );
 }
 
-function WorldConfetti({ level }: { level: number }) {
+function WorldConfetti({ level, settled = false }: { level: number; settled?: boolean }) {
   const particleCount = useMemo(() => {
     const hardwareThreads = navigator.hardwareConcurrency ?? 4;
     const adaptiveCap =
-      hardwareThreads >= 8 ? 1_000_000 : hardwareThreads >= 6 ? 500_000 : 250_000;
+      hardwareThreads >= 8 ? 60_000 : hardwareThreads >= 6 ? 35_000 : 18_000;
 
-    return Math.min(adaptiveCap, 10_000 + level * 1_000);
-  }, [level]);
+    return settled
+      ? Math.min(6_000, 500 + level * 10)
+      : Math.min(adaptiveCap, 1_000 + level * 80);
+  }, [level, settled]);
   const particleSystem = useMemo(() => {
     const geometry = new BufferGeometry();
     const colors = new Float32Array(particleCount * 3);
@@ -2088,7 +2107,7 @@ function WorldConfetti({ level }: { level: number }) {
     geometry.setAttribute("color", new Float32BufferAttribute(colors, 3));
     return { geometry };
   }, [particleCount]);
-  const startedAt = useRef<number | null>(null);
+  const startedAt = useRef<number | null>(settled ? 0 : null);
   const materialRef = useRef<ShaderMaterial>(null);
 
   useEffect(() => () => particleSystem.geometry.dispose(), [particleSystem]);
@@ -2115,9 +2134,16 @@ function WorldConfetti({ level }: { level: number }) {
           "varying vec3 vColor; void main() { if (length(gl_PointCoord - vec2(0.5)) > 0.5) discard; gl_FragColor = vec4(vColor, 0.94); }"
         }
         ref={materialRef}
-        uniforms={{ elapsed: { value: 0 } }}
+        uniforms={{
+          elapsed: { value: 0 },
+          modelPosition: { value: new Vector3(...POKEDEX_MODEL_POSITION) },
+          modelRotationY: { value: POKEDEX_MODEL_ROTATION_Y },
+          modelScale: { value: POKEDEX_MODEL_SCALE },
+          casingMin: { value: new Vector3(...POKEDEX_CASING_BOUNDS.min) },
+          casingMax: { value: new Vector3(...POKEDEX_CASING_BOUNDS.max) },
+        }}
         vertexShader={
-          "attribute vec3 origin; attribute vec3 velocity; attribute vec3 color; attribute float landingTime; uniform float elapsed; varying vec3 vColor; void main() { float t = min(elapsed, landingTime); vec3 worldPosition = origin + velocity * t; worldPosition.y = max(-3.64, origin.y + velocity.y * t - 2.4 * t * t); bool withinCasing = worldPosition.x > -1.15 && worldPosition.x < 2.45 && worldPosition.y > -3.1 && worldPosition.y < 1.9 && worldPosition.z < 2.1 && worldPosition.z > -6.5; if (withinCasing) { worldPosition.z = 2.13; worldPosition.x += sin(origin.y * 17.0 + origin.z * 11.0) * 0.08; worldPosition.y += cos(origin.x * 13.0 + origin.z * 7.0) * 0.05; } vec4 mvPosition = modelViewMatrix * vec4(worldPosition, 1.0); gl_Position = projectionMatrix * mvPosition; gl_PointSize = clamp(8.5 * (180.0 / -mvPosition.z), 2.0, 11.0); vColor = color; }"
+          "attribute vec3 origin; attribute vec3 velocity; attribute vec3 color; attribute float landingTime; uniform float elapsed; uniform vec3 modelPosition; uniform float modelRotationY; uniform float modelScale; uniform vec3 casingMin; uniform vec3 casingMax; varying vec3 vColor; vec3 toLocal(vec3 worldPoint) { vec3 point = (worldPoint - modelPosition) / modelScale; float c = cos(-modelRotationY); float s = sin(-modelRotationY); return vec3(c * point.x + s * point.z, point.y, -s * point.x + c * point.z); } vec3 toWorld(vec3 localPoint) { float c = cos(modelRotationY); float s = sin(modelRotationY); return modelPosition + modelScale * vec3(c * localPoint.x + s * localPoint.z, localPoint.y, -s * localPoint.x + c * localPoint.z); } void main() { float t = min(elapsed, landingTime); vec3 worldPosition = origin + velocity * t; worldPosition.y = max(-3.64, origin.y + velocity.y * t - 2.4 * t * t); vec3 localPosition = toLocal(worldPosition); bool insideCasing = localPosition.x > casingMin.x && localPosition.x < casingMax.x && localPosition.y > casingMin.y && localPosition.y < casingMax.y && localPosition.z < casingMax.z && localPosition.z > casingMin.z - 2.5; if (insideCasing) { localPosition.z = casingMax.z + 0.025; localPosition.x += sin(origin.y * 17.0 + origin.z * 11.0) * 0.035; localPosition.y += cos(origin.x * 13.0 + origin.z * 7.0) * 0.022; worldPosition = toWorld(localPosition); } vec4 mvPosition = modelViewMatrix * vec4(worldPosition, 1.0); gl_Position = projectionMatrix * mvPosition; gl_PointSize = clamp(13.0 * (180.0 / -mvPosition.z), 3.0, 16.0); vColor = color; }"
         }
       />
     </points>
@@ -2405,6 +2431,9 @@ function App() {
   const [confettiLevel, setConfettiLevel] = useState(getSavedConfettiLevel);
   const [showConfetti, setShowConfetti] = useState(false);
   const [confettiEventId, setConfettiEventId] = useState(0);
+  const [settledConfetti, setSettledConfetti] = useState<
+    Array<{ id: number; level: number }>
+  >([]);
   const [showShinyCelebration, setShowShinyCelebration] = useState(false);
   const [isShinyRound, setIsShinyRound] = useState(
     () => initialMode === "game" && Math.random() < SHINY_ROUND_CHANCE,
@@ -2876,9 +2905,16 @@ function App() {
         return new Set([...currentSkins, reward.id]);
       });
       if (confettiLevel > 0) {
-        setConfettiEventId((eventId) => eventId + 1);
+        const burstId = Date.now();
+        setConfettiEventId(burstId);
         setShowConfetti(true);
-        window.setTimeout(() => setShowConfetti(false), 5_000);
+        window.setTimeout(() => {
+          setShowConfetti(false);
+          setSettledConfetti((current) => [
+            ...current,
+            { id: burstId, level: confettiLevel },
+          ]);
+        }, 5_000);
       }
       setCapturedPokemonIds((currentCaptures) => {
         if (currentCaptures.has(pokemonState.pokemon.id)) {
@@ -3203,6 +3239,13 @@ function App() {
             intensity={isEvening ? 0.65 : 0.9}
           />
           <Suspense fallback={null}>
+            {settledConfetti.map((burst) => (
+              <WorldConfetti
+                key={`settled-confetti-${burst.id}`}
+                level={burst.level}
+                settled
+              />
+            ))}
             {showConfetti ? (
               <WorldConfetti
                 key={`world-confetti-${confettiLevel}-${confettiEventId}`}
@@ -3211,6 +3254,7 @@ function App() {
             ) : null}
             <ScanEnvironment
               animatedSpriteUrl={animatedSpriteUrl}
+              concealed={mode === "game" && !isGameRoundRevealed}
               habitat={habitat}
               isEvening={isEvening}
               spriteUrl={spriteUrl}
