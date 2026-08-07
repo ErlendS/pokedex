@@ -10,6 +10,7 @@ import {
   useRef,
   useState,
 } from "react";
+import type { CSSProperties } from "react";
 import {
   CanvasTexture,
   DoubleSide,
@@ -49,6 +50,30 @@ type FlavorTextEntry = {
 type PokemonSpecies = {
   flavor_text_entries: FlavorTextEntry[];
   habitat: { name: string } | null;
+};
+
+type PokemonDetail = {
+  id: number;
+  name: string;
+  height: number;
+  weight: number;
+  types: Array<{ slot: number; type: { name: string } }>;
+  abilities: Array<{ ability: { name: string }; is_hidden: boolean }>;
+  moves: Array<{ move: { name: string } }>;
+  species: { url: string };
+};
+
+type PokemonDetailSpecies = {
+  evolution_chain: { url: string };
+};
+
+type EvolutionChainNode = {
+  species: { name: string };
+  evolves_to: EvolutionChainNode[];
+};
+
+type EvolutionChain = {
+  chain: EvolutionChainNode;
 };
 
 type PokemonState =
@@ -190,12 +215,33 @@ const ANIMATED_SPRITE_BASE_URL =
 const NEXT_ROUND_DELAY_SECONDS = 3;
 const ROUND_TIME_LIMIT_SECONDS = 20;
 const MAX_ROUND_POINTS = 100;
-const SHINY_ROUND_CHANCE = 0.05;
+const MINIMUM_STARTING_SCORE = 500;
+const EXTRA_TIME_SECONDS = 5;
+const EXTRA_TIME_HINT_COST = 100;
+const CONFETTI_UPGRADE_COST = 250;
+const CONFETTI_MAX_LEVEL = 1_000;
+const CONFETTI_MAX_PARTICLES = 1_024;
+const NAME_REVEAL_UPGRADE_COST = 150;
+const NAME_REVEAL_MAX_LEVEL = 10;
+const POKEDEX_SKIN_COST = 1_000;
+const SHINY_ROUND_CHANCE = 1 / 8_192;
 const APP_MODE_STORAGE_KEY = "pokedex:mode";
 const CAPTURED_POKEMON_STORAGE_KEY = "pokedex:captured-pokemon";
 const SHINY_CAPTURED_POKEMON_STORAGE_KEY = "pokedex:shiny-captured-pokemon";
 const GAME_GENERATIONS_STORAGE_KEY = "pokedex:game-generations";
 const RECENT_GAME_POKEMON_STORAGE_KEY = "pokedex:recent-game-pokemon";
+const GAME_SCORE_STORAGE_KEY = "pokedex:score";
+const CONFETTI_UPGRADE_STORAGE_KEY = "pokedex:confetti-upgrade";
+const NAME_REVEAL_UPGRADE_STORAGE_KEY = "pokedex:name-reveal-upgrade";
+const COMPLETED_ROUNDS_STORAGE_KEY = "pokedex:completed-rounds";
+const POKEDEX_SKINS_STORAGE_KEY = "pokedex:owned-skins";
+const POKEDEX_EQUIPPED_SKIN_STORAGE_KEY = "pokedex:equipped-skin";
+const POKEDEX_SKINS = [
+  { id: "classic", label: "Classic Red" }, { id: "midnight", label: "Midnight" },
+  { id: "neon", label: "Neon Cyber" }, { id: "forest", label: "Forest Ranger" },
+  { id: "ocean", label: "Ocean" }, { id: "gold", label: "Champion Gold" },
+] as const;
+type PokedexSkinId = (typeof POKEDEX_SKINS)[number]["id"];
 const WHOSE_THAT_POKEMON_VIDEO_ID = "EE-xtCF3T94";
 const WHOSE_THAT_POKEMON_INTRO_SECONDS = 5;
 const WHOSE_THAT_POKEMON_FALLBACK_MS =
@@ -219,6 +265,52 @@ function getSavedAppMode(): AppMode {
   const savedMode = window.localStorage.getItem(APP_MODE_STORAGE_KEY);
 
   return savedMode === "game" ? "game" : "lookup";
+}
+
+function getSavedGameScore() {
+  const savedScore = Number(window.localStorage.getItem(GAME_SCORE_STORAGE_KEY));
+
+  return Number.isFinite(savedScore)
+    ? Math.max(MINIMUM_STARTING_SCORE, Math.floor(savedScore))
+    : MINIMUM_STARTING_SCORE;
+}
+
+function getSavedConfettiLevel() {
+  const savedValue = window.localStorage.getItem(CONFETTI_UPGRADE_STORAGE_KEY);
+
+  // Migrate the original boolean upgrade into the first level.
+  if (savedValue === "true") {
+    return 1;
+  }
+
+  const savedLevel = Number(savedValue);
+  return Number.isFinite(savedLevel)
+    ? Math.min(CONFETTI_MAX_LEVEL, Math.max(0, Math.floor(savedLevel)))
+    : 0;
+}
+
+function getSavedNameRevealLevel() {
+  const savedLevel = Number(window.localStorage.getItem(NAME_REVEAL_UPGRADE_STORAGE_KEY));
+  return Number.isFinite(savedLevel)
+    ? Math.min(NAME_REVEAL_MAX_LEVEL, Math.max(0, Math.floor(savedLevel)))
+    : 0;
+}
+
+function getSavedCompletedRounds() {
+  const savedRounds = Number(window.localStorage.getItem(COMPLETED_ROUNDS_STORAGE_KEY));
+  return Number.isInteger(savedRounds) && savedRounds >= 0 ? savedRounds : 0;
+}
+function getSavedOwnedSkins(): Set<PokedexSkinId> {
+  try { const parsed: unknown = JSON.parse(window.localStorage.getItem(POKEDEX_SKINS_STORAGE_KEY) ?? '["classic"]'); return new Set<PokedexSkinId>(Array.isArray(parsed) ? parsed.filter((id): id is PokedexSkinId => POKEDEX_SKINS.some((skin) => skin.id === id)) : ["classic"]); } catch { return new Set<PokedexSkinId>(["classic"]); }
+}
+
+function maskPokemonName(name: string, revealedLetters: number) {
+  let shown = 0;
+  return [...formatPokemonName(name)].map((character) => {
+    if (!/[a-z]/i.test(character)) return character;
+    shown += 1;
+    return shown <= revealedLetters ? character : "_";
+  }).join(" ");
 }
 
 function getSavedGameGenerations() {
@@ -355,6 +447,10 @@ function CapturedPokemonCollection({
 }) {
   const [pokemonIndex, setPokemonIndex] = useState<PokemonIndexEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [selectedPokemonId, setSelectedPokemonId] = useState<number | null>(null);
+  const [selectedPokemon, setSelectedPokemon] = useState<PokemonDetail | null>(null);
+  const [evolutionStages, setEvolutionStages] = useState<string[]>([]);
+  const [detailState, setDetailState] = useState<"idle" | "loading" | "error">("idle");
 
   useEffect(() => {
     const controller = new AbortController();
@@ -387,6 +483,79 @@ function CapturedPokemonCollection({
 
     return () => controller.abort();
   }, []);
+
+  useEffect(() => {
+    if (selectedPokemonId === null) {
+      return;
+    }
+
+    const controller = new AbortController();
+
+    async function loadPokemonDetails() {
+      try {
+        const pokemonResponse = await fetch(
+          `https://pokeapi.co/api/v2/pokemon/${selectedPokemonId}`,
+          { signal: controller.signal },
+        );
+        if (!pokemonResponse.ok) {
+          throw new Error("Unable to load Pokemon details.");
+        }
+        const pokemon = (await pokemonResponse.json()) as PokemonDetail;
+        const speciesResponse = await fetch(pokemon.species.url, {
+          signal: controller.signal,
+        });
+        if (!speciesResponse.ok) {
+          throw new Error("Unable to load Pokemon species.");
+        }
+        const species = (await speciesResponse.json()) as PokemonDetailSpecies;
+        const chainResponse = await fetch(species.evolution_chain.url, {
+          signal: controller.signal,
+        });
+        if (!chainResponse.ok) {
+          throw new Error("Unable to load evolution chain.");
+        }
+        const evolutionChain = (await chainResponse.json()) as EvolutionChain;
+
+        const stages: string[] = [];
+        let currentStage: EvolutionChainNode[] = [evolutionChain.chain];
+        while (currentStage.length > 0) {
+          stages.push(
+            currentStage
+              .map((stage) => formatPokemonName(stage.species.name))
+              .join(" / "),
+          );
+          currentStage = currentStage.flatMap((stage) => stage.evolves_to);
+        }
+
+        if (!controller.signal.aborted) {
+          setSelectedPokemon(pokemon);
+          setEvolutionStages(stages);
+          setDetailState("idle");
+        }
+      } catch (error) {
+        if (!(error instanceof DOMException && error.name === "AbortError")) {
+          setDetailState("error");
+        }
+      }
+    }
+
+    void loadPokemonDetails();
+    return () => controller.abort();
+  }, [selectedPokemonId]);
+
+  const selectPokemon = (pokemonId: number) => {
+    setSelectedPokemon(null);
+    setEvolutionStages([]);
+    setDetailState("loading");
+    setSelectedPokemonId(pokemonId);
+  };
+
+  const closePokemonDetails = () => {
+    setSelectedPokemonId(null);
+    setSelectedPokemon(null);
+    setEvolutionStages([]);
+    setDetailState("idle");
+  };
 
   return (
     <div
@@ -430,24 +599,90 @@ function CapturedPokemonCollection({
                   className={isCaptured ? (isShinyCaptured ? "is-captured is-shiny" : "is-captured") : "is-unknown"}
                   key={pokemon.url}
                 >
-                  <img
-                    alt={
-                      isCaptured
-                        ? `${formatPokemonName(pokemon.name)}${isShinyCaptured ? " (Shiny)" : ""}`
-                        : "Unknown Pokemon silhouette"
-                    }
-                    loading="lazy"
-                    src={isShinyCaptured ? getShinySpriteUrl(pokemonId) : getSpriteUrl(pokemonId)}
-                  />
-                  <span className="collection-number">#{String(pokemonId).padStart(3, "0")}</span>
-                  <strong>
-                    {isCaptured ? formatPokemonName(pokemon.name) : "???"}
-                    {isShinyCaptured ? <em aria-label="Shiny captured"> ✦</em> : null}
-                  </strong>
+                  <button
+                    aria-label={`View details for ${isCaptured ? formatPokemonName(pokemon.name) : `Pokemon number ${pokemonId}`}`}
+                    className="collection-card"
+                    onClick={() => selectPokemon(pokemonId)}
+                    type="button"
+                  >
+                    <img
+                      alt={
+                        isCaptured
+                          ? `${formatPokemonName(pokemon.name)}${isShinyCaptured ? " (Shiny)" : ""}`
+                          : "Unknown Pokemon silhouette"
+                      }
+                      loading="lazy"
+                      src={isShinyCaptured ? getShinySpriteUrl(pokemonId) : getSpriteUrl(pokemonId)}
+                    />
+                    <span className="collection-number">#{String(pokemonId).padStart(3, "0")}</span>
+                    <strong>
+                      {isCaptured ? formatPokemonName(pokemon.name) : "???"}
+                      {isShinyCaptured ? <em aria-label="Shiny captured"> ✦</em> : null}
+                    </strong>
+                  </button>
                 </li>
               );
             })}
           </ol>
+        ) : null}
+        {selectedPokemonId !== null ? (
+          <section aria-live="polite" className="pokemon-detail-panel">
+            <button
+              aria-label="Close Pokemon details"
+              className="pokemon-detail-close"
+              onClick={closePokemonDetails}
+              type="button"
+            >
+              ×
+            </button>
+            {detailState === "loading" ? <p>Loading Pokédex data…</p> : null}
+            {detailState === "error" ? (
+              <p>Could not load this Pokémon’s details. Try another card.</p>
+            ) : null}
+            {selectedPokemon ? (
+              <>
+                <header className="pokemon-detail-heading">
+                  <img
+                    alt={formatPokemonName(selectedPokemon.name)}
+                    src={
+                      shinyCapturedPokemonIds.has(selectedPokemon.id)
+                        ? getShinySpriteUrl(selectedPokemon.id)
+                        : getSpriteUrl(selectedPokemon.id)
+                    }
+                  />
+                  <div>
+                    <p>Pokédex #{String(selectedPokemon.id).padStart(3, "0")}</p>
+                    <h3>{formatPokemonName(selectedPokemon.name)}</h3>
+                  </div>
+                </header>
+                <dl className="pokemon-detail-facts">
+                  <div>
+                    <dt>Type</dt>
+                    <dd>{selectedPokemon.types
+                      .slice()
+                      .sort((left, right) => left.slot - right.slot)
+                      .map((type) => formatPokemonName(type.type.name))
+                      .join(" / ")}</dd>
+                  </div>
+                  <div><dt>Height</dt><dd>{(selectedPokemon.height / 10).toFixed(1)} m</dd></div>
+                  <div><dt>Weight</dt><dd>{(selectedPokemon.weight / 10).toFixed(1)} kg</dd></div>
+                  <div><dt>Abilities</dt><dd>{selectedPokemon.abilities.map((ability) => `${formatPokemonName(ability.ability.name)}${ability.is_hidden ? " (Hidden)" : ""}`).join(", ")}</dd></div>
+                </dl>
+                <div className="pokemon-detail-section">
+                  <h4>Evolution chain</h4>
+                  <p>{evolutionStages.join(" → ") || "No known evolution."}</p>
+                </div>
+                <div className="pokemon-detail-section">
+                  <h4>Moves</h4>
+                  <ul className="pokemon-detail-moves">
+                    {selectedPokemon.moves.slice(0, 12).map((move) => (
+                      <li key={move.move.name}>{formatPokemonName(move.move.name)}</li>
+                    ))}
+                  </ul>
+                </div>
+              </>
+            ) : null}
+          </section>
         ) : null}
       </section>
     </div>
@@ -619,6 +854,28 @@ function playIncorrectBuzz() {
   oscillator.stop(now + 0.21);
 
   window.setTimeout(() => void audioContext.close(), 350);
+}
+
+function playShinyFlourish() {
+  const audioContext = new AudioContext();
+  const now = audioContext.currentTime;
+
+  [659.25, 783.99, 987.77, 1_318.51].forEach((frequency, index) => {
+    const oscillator = audioContext.createOscillator();
+    const gain = audioContext.createGain();
+    const start = now + index * 0.075;
+
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(frequency, start);
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(0.11, start + 0.012);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.22);
+    oscillator.connect(gain).connect(audioContext.destination);
+    oscillator.start(start);
+    oscillator.stop(start + 0.23);
+  });
+
+  window.setTimeout(() => void audioContext.close(), 650);
 }
 
 function WhosThatPokemonIntro({
@@ -1081,12 +1338,9 @@ function PokemonSprite({
   spriteUrl: string;
 }) {
   const [isLoaded, setIsLoaded] = useState(false);
-  const [displayUrl, setDisplayUrl] = useState(animatedSpriteUrl);
-
-  useEffect(() => {
-    setIsLoaded(false);
-    setDisplayUrl(animatedSpriteUrl);
-  }, [animatedSpriteUrl]);
+  const [failedAnimatedUrl, setFailedAnimatedUrl] = useState<string | null>(null);
+  const displayUrl =
+    failedAnimatedUrl === animatedSpriteUrl ? spriteUrl : animatedSpriteUrl;
 
   return (
     <Html
@@ -1105,7 +1359,7 @@ function PokemonSprite({
         onLoad={() => setIsLoaded(true)}
         onError={() => {
           if (displayUrl !== spriteUrl) {
-            setDisplayUrl(spriteUrl);
+            setFailedAnimatedUrl(animatedSpriteUrl);
           }
         }}
         src={displayUrl}
@@ -1586,17 +1840,16 @@ function AnimatedScanTarget({
   spriteUrl: string | null;
 }) {
   const fallbackUrl = spriteUrl ?? getSpriteUrl(25);
-  const [displayUrl, setDisplayUrl] = useState(animatedSpriteUrl ?? fallbackUrl);
-
-  useEffect(() => {
-    setDisplayUrl(animatedSpriteUrl ?? fallbackUrl);
-  }, [animatedSpriteUrl, fallbackUrl]);
+  const preferredUrl = animatedSpriteUrl ?? fallbackUrl;
+  const [failedAnimatedUrl, setFailedAnimatedUrl] = useState<string | null>(null);
+  const displayUrl =
+    failedAnimatedUrl === preferredUrl ? fallbackUrl : preferredUrl;
 
   return (
     <img
       alt={concealed ? "Mystery Pokemon silhouette" : "Pokemon scan target"}
       draggable={false}
-      onError={() => setDisplayUrl(fallbackUrl)}
+      onError={() => setFailedAnimatedUrl(preferredUrl)}
       src={displayUrl}
       style={{
         display: "block",
@@ -1632,7 +1885,7 @@ function PokedexModel({
 
   return (
     <>
-    <group position={[0.7, -0.7, 0.35]} rotation={[0, 0.38, 0]} scale={2.15}>
+    <group position={[0.7, -0.7, 0.35]} rotation={[0, -0.99, 0]} scale={2.15}>
       <primitive object={scene} />
       <PokedexScreen
         animatedSpriteUrl={animatedSpriteUrl}
@@ -1646,8 +1899,8 @@ function PokedexModel({
     </group>
     <primitive
       object={handScene}
-      position={[-0.4, -1.35, 3.2]}
-      rotation={[0, 0.38, 0]}
+      position={[0.25, -1.35, 3.2]}
+      rotation={[0, -0.99, 0]}
       scale={1.7}
     />
     </>
@@ -1904,11 +2157,11 @@ function App() {
   );
   const [guess, setGuess] = useState("");
   const [roundResult, setRoundResult] = useState<RoundResult>("guessing");
-  const [gameStats, setGameStats] = useState<GameStats>({
-    score: 0,
+  const [gameStats, setGameStats] = useState<GameStats>(() => ({
+    score: getSavedGameScore(),
     streak: 0,
     correctAnswers: 0,
-  });
+  }));
   const [capturedPokemonIds, setCapturedPokemonIds] = useState<Set<number>>(
     getSavedCapturedPokemonIds,
   );
@@ -1920,8 +2173,20 @@ function App() {
   const [roundSecondsRemaining, setRoundSecondsRemaining] = useState(
     ROUND_TIME_LIMIT_SECONDS,
   );
+  const [roundElapsedSeconds, setRoundElapsedSeconds] = useState(0);
+  const [completedRounds, setCompletedRounds] = useState(getSavedCompletedRounds);
+  const [walletRewardMessage, setWalletRewardMessage] = useState("");
+  const [ownedSkins, setOwnedSkins] = useState<Set<PokedexSkinId>>(
+    () => getSavedOwnedSkins(),
+  );
+  const [equippedSkin, setEquippedSkin] = useState<PokedexSkinId>(() => (window.localStorage.getItem(POKEDEX_EQUIPPED_SKIN_STORAGE_KEY) as PokedexSkinId) || "classic");
   const [isIntroComplete, setIsIntroComplete] = useState(false);
   const [isHintVisible, setIsHintVisible] = useState(false);
+  const [nameRevealLevel, setNameRevealLevel] = useState(getSavedNameRevealLevel);
+  const [hasBoughtExtraTime, setHasBoughtExtraTime] = useState(false);
+  const [confettiLevel, setConfettiLevel] = useState(getSavedConfettiLevel);
+  const [showConfetti, setShowConfetti] = useState(false);
+  const [showShinyCelebration, setShowShinyCelebration] = useState(false);
   const [isShinyRound, setIsShinyRound] = useState(
     () => initialMode === "game" && Math.random() < SHINY_ROUND_CHANCE,
   );
@@ -1937,6 +2202,8 @@ function App() {
   const guessInputRef = useRef<HTMLInputElement>(null);
   const guessRef = useRef("");
   const recognitionRef = useRef<VoiceRecognition | null>(null);
+  const hasCountedCurrentRoundRef = useRef(false);
+  const confettiLevelRef = useRef(confettiLevel);
   const recentGamePokemonIdsRef = useRef<number[]>(
     initialGamePokemonId
       ? rememberGamePokemonId(savedRecentGamePokemonIds, initialGamePokemonId)
@@ -1968,6 +2235,9 @@ function App() {
     setIsIntroComplete(false);
     setIsCryComplete(false);
     setIsHintVisible(false);
+    setRoundElapsedSeconds(0);
+    hasCountedCurrentRoundRef.current = false;
+    setHasBoughtExtraTime(false);
     setIsShinyRound(Math.random() < SHINY_ROUND_CHANCE);
   }, [selectedGenerations]);
 
@@ -2010,6 +2280,10 @@ function App() {
   }, [mode]);
 
   useEffect(() => {
+    window.localStorage.setItem(GAME_SCORE_STORAGE_KEY, String(gameStats.score));
+  }, [gameStats.score]);
+
+  useEffect(() => {
     window.localStorage.setItem(
       GAME_GENERATIONS_STORAGE_KEY,
       JSON.stringify(selectedGenerations),
@@ -2031,6 +2305,24 @@ function App() {
       ),
     );
   }, [shinyCapturedPokemonIds]);
+
+  useEffect(() => {
+    confettiLevelRef.current = confettiLevel;
+    window.localStorage.setItem(
+      CONFETTI_UPGRADE_STORAGE_KEY,
+      String(confettiLevel),
+    );
+  }, [confettiLevel]);
+
+  useEffect(() => {
+    window.localStorage.setItem(NAME_REVEAL_UPGRADE_STORAGE_KEY, String(nameRevealLevel));
+  }, [nameRevealLevel]);
+
+  useEffect(() => {
+    window.localStorage.setItem(COMPLETED_ROUNDS_STORAGE_KEY, String(completedRounds));
+  }, [completedRounds]);
+  useEffect(() => { window.localStorage.setItem(POKEDEX_SKINS_STORAGE_KEY, JSON.stringify([...ownedSkins])); }, [ownedSkins]);
+  useEffect(() => { window.localStorage.setItem(POKEDEX_EQUIPPED_SKIN_STORAGE_KEY, equippedSkin); }, [equippedSkin]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -2201,18 +2493,47 @@ function App() {
 
     const interval = window.setInterval(() => {
       setRoundSecondsRemaining((seconds) => Math.max(0, seconds - 1));
+      setRoundElapsedSeconds((seconds) => seconds + 1);
     }, 1_000);
-    const timeout = window.setTimeout(() => {
-      setRoundSecondsRemaining(0);
-      setRoundResult("timed-out");
-      setGameStats((currentStats) => ({ ...currentStats, streak: 0 }));
-    }, ROUND_TIME_LIMIT_SECONDS * 1_000);
 
     return () => {
       window.clearInterval(interval);
-      window.clearTimeout(timeout);
     };
-  }, [mode, pokemonState, roundResult, submittedQuery]);
+  }, [mode, pokemonState, roundResult, submittedQuery, roundSecondsRemaining]);
+
+  useEffect(() => {
+    if (
+      mode !== "game" ||
+      roundResult !== "guessing" ||
+      pokemonState.status !== "ready" ||
+      roundSecondsRemaining > 0
+    ) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      setRoundResult("timed-out");
+      setGameStats((currentStats) => ({ ...currentStats, streak: 0 }));
+    }, 0);
+
+    return () => window.clearTimeout(timeout);
+  }, [mode, pokemonState, roundResult, roundSecondsRemaining]);
+
+  useEffect(() => {
+    if (roundResult === "guessing" || hasCountedCurrentRoundRef.current) return;
+    hasCountedCurrentRoundRef.current = true;
+    const timeout = window.setTimeout(() => {
+      setCompletedRounds((currentRounds) => {
+        const nextRounds = currentRounds + 1;
+        if (nextRounds % 10 === 0) {
+          setGameStats((currentStats) => ({ ...currentStats, score: currentStats.score + 100 }));
+          setWalletRewardMessage("10 rounds complete! +100 wallet points.");
+        }
+        return nextRounds;
+      });
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, [roundResult]);
 
   useEffect(() => {
     if (
@@ -2231,15 +2552,26 @@ function App() {
     };
   }, []);
 
+  const currentPokemonIsCaptured =
+    pokemonState.status === "ready" &&
+    capturedPokemonIds.has(pokemonState.pokemon.id);
+  const currentPokemonWasCapturedShiny =
+    pokemonState.status === "ready" &&
+    shinyCapturedPokemonIds.has(pokemonState.pokemon.id);
+  // A caught shiny remains a shiny entry everywhere the player sees that
+  // Pokémon. A newly rolled shiny still takes priority for the live round.
+  const shouldDisplayShiny = isShinyRound || currentPokemonWasCapturedShiny;
+  const isCurrentGamePokemonConcealed =
+    mode === "game" && !isGameRoundRevealed && !currentPokemonIsCaptured;
   const spriteUrl =
     pokemonState.status === "ready"
-      ? isShinyRound
+      ? shouldDisplayShiny
         ? getShinySpriteUrl(pokemonState.pokemon.id)
         : getSpriteUrl(pokemonState.pokemon.id)
       : null;
   const animatedSpriteUrl =
     pokemonState.status === "ready"
-      ? isShinyRound
+      ? shouldDisplayShiny
         ? getAnimatedShinySpriteUrl(pokemonState.pokemon.id)
         : getAnimatedSpriteUrl(pokemonState.pokemon.id)
       : null;
@@ -2263,7 +2595,7 @@ function App() {
       : null;
   const pokemonLabel =
     pokemonState.status === "ready"
-      ? mode === "game" && !isGameRoundRevealed
+      ? isCurrentGamePokemonConcealed
         ? "Mystery Pokemon"
         : `#${pokemonState.pokemon.id} ${formatPokemonName(pokemonState.pokemon.name)}`
       : pokemonState.status === "loading"
@@ -2304,6 +2636,22 @@ function App() {
     setRoundResult(isCorrect ? "correct" : "incorrect");
     if (isCorrect) {
       playCorrectJingle();
+      if (isShinyRound) {
+        playShinyFlourish();
+        setShowShinyCelebration(true);
+        window.setTimeout(() => setShowShinyCelebration(false), 1_900);
+      }
+      setOwnedSkins((currentSkins) => {
+        const unownedSkins = POKEDEX_SKINS.filter((skin) => !currentSkins.has(skin.id));
+        if (unownedSkins.length === 0) return currentSkins;
+        const reward = unownedSkins[Math.floor(Math.random() * unownedSkins.length)];
+        setWalletRewardMessage(`${reward.label} skin unlocked!`);
+        return new Set([...currentSkins, reward.id]);
+      });
+      if (confettiLevel > 0) {
+        setShowConfetti(true);
+        window.setTimeout(() => setShowConfetti(false), 1_600);
+      }
       setCapturedPokemonIds((currentCaptures) => {
         if (currentCaptures.has(pokemonState.pokemon.id)) {
           return currentCaptures;
@@ -2343,7 +2691,61 @@ function App() {
         correctAnswers: currentStats.correctAnswers + 1,
       };
     });
-  }, [isShinyRound, pokemonState, roundSecondsRemaining]);
+  }, [confettiLevel, isShinyRound, pokemonState, roundSecondsRemaining]);
+  const buyExtraTime = () => {
+    if (
+      hasBoughtExtraTime ||
+      roundResult !== "guessing" ||
+      pokemonState.status !== "ready" ||
+      gameStats.score < EXTRA_TIME_HINT_COST
+    ) {
+      return;
+    }
+
+    setGameStats((currentStats) => ({
+      ...currentStats,
+      score: currentStats.score - EXTRA_TIME_HINT_COST,
+    }));
+    setRoundSecondsRemaining((seconds) => seconds + EXTRA_TIME_SECONDS);
+    setHasBoughtExtraTime(true);
+  };
+  const buyConfettiUpgrade = () => {
+    if (
+      confettiLevel >= CONFETTI_MAX_LEVEL ||
+      gameStats.score < CONFETTI_UPGRADE_COST
+    ) {
+      return;
+    }
+
+    setGameStats((currentStats) => ({
+      ...currentStats,
+      score: currentStats.score - CONFETTI_UPGRADE_COST,
+    }));
+    setConfettiLevel((currentLevel) => {
+      const nextLevel = Math.min(
+        CONFETTI_MAX_LEVEL,
+        Math.max(currentLevel, confettiLevelRef.current) + 1,
+      );
+      confettiLevelRef.current = nextLevel;
+      window.localStorage.setItem(
+        CONFETTI_UPGRADE_STORAGE_KEY,
+        String(nextLevel),
+      );
+      return nextLevel;
+    });
+  };
+  const buyNameRevealUpgrade = () => {
+    if (nameRevealLevel >= NAME_REVEAL_MAX_LEVEL || gameStats.score < NAME_REVEAL_UPGRADE_COST) return;
+    setGameStats((currentStats) => ({ ...currentStats, score: currentStats.score - NAME_REVEAL_UPGRADE_COST }));
+    setNameRevealLevel((currentLevel) => currentLevel + 1);
+  };
+  const buyOrEquipSkin = (skinId: PokedexSkinId) => {
+    if (ownedSkins.has(skinId)) { setEquippedSkin(skinId); return; }
+    if (gameStats.score < POKEDEX_SKIN_COST) return;
+    setGameStats((stats) => ({ ...stats, score: stats.score - POKEDEX_SKIN_COST }));
+    setOwnedSkins((skins) => new Set([...skins, skinId]));
+    setEquippedSkin(skinId);
+  };
   const selectedVoicePokemonCandidates = useMemo(() => {
     const selectedIds = new Set(getPokemonIdsForGenerations(selectedGenerations));
     return voicePokemonIndex.filter((pokemon) => selectedIds.has(pokemon.id));
@@ -2512,6 +2914,20 @@ function App() {
     isHintVisible ? 0.1 : 0,
     timedRevealAmount,
   );
+  const maskedPokemonName =
+    pokemonState.status === "ready"
+      ? maskPokemonName(
+          pokemonState.pokemon.name,
+          isGameRoundRevealed
+            ? pokemonState.pokemon.name.replace(/[^a-z]/gi, "").length
+            : nameRevealLevel === 0
+              ? 0
+              : Math.min(
+                pokemonState.pokemon.name.replace(/[^a-z]/gi, "").length - 1,
+                Math.max(0, roundElapsedSeconds - 10) * nameRevealLevel,
+              ),
+        )
+      : "";
 
   return (
     <>
@@ -2519,9 +2935,44 @@ function App() {
         onComplete={() => setIsIntroComplete(true)}
         playbackKey={introPlaybackKey}
       />
-      <main className="pokedex-app">
+      {showConfetti ? (
+        <div aria-hidden="true" className="confetti-burst">
+          {Array.from(
+            {
+              length: Math.min(
+                CONFETTI_MAX_PARTICLES,
+                24 + confettiLevel,
+              ),
+            },
+            (_, index) => (
+            <span
+              key={index}
+              style={
+                {
+                  "--confetti-index": index,
+                  "--confetti-scale": Math.min(1.8, 1 + confettiLevel * 0.1),
+                } as CSSProperties
+              }
+            />
+            ),
+          )}
+        </div>
+      ) : null}
+      {showShinyCelebration ? (
+        <div aria-hidden="true" className="shiny-fireworks">
+          {Array.from({ length: 42 }, (_, index) => (
+            <span key={index} style={{ "--firework-index": index } as CSSProperties} />
+          ))}
+        </div>
+      ) : null}
+      {isShinyRound && isGameRoundRevealed ? (
+        <div aria-hidden="true" className="shiny-orbit">
+          {Array.from({ length: 8 }, (_, index) => <span key={index} />)}
+        </div>
+      ) : null}
+      <main className={`pokedex-app skin-${equippedSkin}${showShinyCelebration ? " is-shaking" : ""}`}>
       <section className="viewer-shell" aria-label="Interactive Pokedex model">
-        <Canvas shadows camera={{ position: [8.6, 2, 4.1], fov: 60 }}>
+        <Canvas shadows camera={{ position: [6.7, 2, 4.8], fov: 60 }}>
           <color attach="background" args={[isEvening ? "#2a3150" : "#8fc8ec"]} />
           <ambientLight intensity={isEvening ? 0.75 : 1.35} />
           <directionalLight
@@ -2538,14 +2989,14 @@ function App() {
           <Suspense fallback={null}>
             <ScanEnvironment
               animatedSpriteUrl={animatedSpriteUrl}
-              concealed={mode === "game" && !isGameRoundRevealed}
+              concealed={false}
               habitat={habitat}
               isEvening={isEvening}
               spriteUrl={spriteUrl}
             />
             <PokedexModel
               animatedSpriteUrl={animatedSpriteUrl}
-              concealed={mode === "game" && !isGameRoundRevealed}
+              concealed={isCurrentGamePokemonConcealed}
               flavorText={flavorText}
               revealAmount={silhouetteRevealAmount}
               onDPadStep={
@@ -2561,7 +3012,7 @@ function App() {
             maxPolarAngle={Math.PI / 2}
             minDistance={2.5}
             minPolarAngle={Math.PI / 4}
-            target={[0.2, -0.9, -2.8]}
+            target={[0, -0.9, -2.8]}
           />
         </Canvas>
       </section>
@@ -2633,6 +3084,11 @@ function App() {
                   <dd>{isGameRoundRevealed ? "—" : `${roundSecondsRemaining}s`}</dd>
                 </div>
               </dl>
+              {walletRewardMessage ? (
+                <p aria-live="polite" className="wallet-reward">
+                  {walletRewardMessage}
+                </p>
+              ) : null}
               <fieldset className="generation-picker">
                 <legend>Generations — applies next round</legend>
                 <div className="generation-picker-options">
@@ -2656,6 +3112,10 @@ function App() {
                 </div>
               </fieldset>
               <div className="game-utilities">
+                <div className="skin-shop" aria-label="Pokedex skin shop">
+                  <strong>Pokédex skins</strong>
+                  {POKEDEX_SKINS.map((skin) => <button className="hint-button" disabled={!ownedSkins.has(skin.id) && gameStats.score < POKEDEX_SKIN_COST} key={skin.id} onClick={() => buyOrEquipSkin(skin.id)} type="button">{equippedSkin === skin.id ? `${skin.label} equipped` : ownedSkins.has(skin.id) ? `Equip ${skin.label}` : `${skin.label} (${POKEDEX_SKIN_COST} pts)`}</button>)}
+                </div>
                 <button
                   aria-haspopup="dialog"
                   aria-label={`Open captured Pokemon collection. ${selectedCapturedPokemonCount} of ${selectedPokemonIds.length} selected Pokemon caught, ${capturedPokemonCount} caught overall.`}
@@ -2693,9 +3153,53 @@ function App() {
                   onClick={() => setIsHintVisible(true)}
                   type="button"
                 >
-                  {isHintVisible ? "Hint used" : "Hint: reveal 10%"}
+                  {isHintVisible ? "Free reveal used" : "Free hint: reveal 10%"}
+                </button>
+                <button
+                  className="hint-button"
+                  disabled={
+                    nameRevealLevel >= NAME_REVEAL_MAX_LEVEL ||
+                    gameStats.score < NAME_REVEAL_UPGRADE_COST
+                  }
+                  onClick={buyNameRevealUpgrade}
+                  type="button"
+                >
+                  {nameRevealLevel >= NAME_REVEAL_MAX_LEVEL
+                    ? "Name reveal maxed"
+                    : `Name reveal Lv. ${nameRevealLevel} → ${nameRevealLevel + 1} (${NAME_REVEAL_UPGRADE_COST} pts)`}
+                </button>
+                <button
+                  className="hint-button"
+                  disabled={
+                    pokemonState.status !== "ready" ||
+                    isGameRoundRevealed ||
+                    hasBoughtExtraTime ||
+                    gameStats.score < EXTRA_TIME_HINT_COST
+                  }
+                  onClick={buyExtraTime}
+                  type="button"
+                >
+                  {hasBoughtExtraTime
+                    ? `+${EXTRA_TIME_SECONDS}s used`
+                    : `Buy +${EXTRA_TIME_SECONDS}s (${EXTRA_TIME_HINT_COST} pts)`}
+                </button>
+                <button
+                  className="hint-button"
+                  disabled={
+                    confettiLevel >= CONFETTI_MAX_LEVEL ||
+                    gameStats.score < CONFETTI_UPGRADE_COST
+                  }
+                  onClick={buyConfettiUpgrade}
+                  type="button"
+                >
+                  {confettiLevel >= CONFETTI_MAX_LEVEL
+                    ? "Confetti maxed (1000)"
+                    : `Confetti Lv. ${confettiLevel} → ${confettiLevel + 1} (${CONFETTI_UPGRADE_COST} pts)`}
                 </button>
               </div>
+              <p aria-live="polite" className="first-letter-hint">
+                Name reveal: <strong>{maskedPokemonName}</strong>
+              </p>
             </>
           ) : (
             <p className="status">
