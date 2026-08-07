@@ -76,6 +76,10 @@ type PokemonIndexEntry = {
   url: string;
 };
 
+type VoicePokemonCandidate = PokemonIndexEntry & {
+  id: number;
+};
+
 type DetectedBarcode = {
   rawValue: string;
 };
@@ -189,6 +193,7 @@ const MAX_ROUND_POINTS = 100;
 const SHINY_ROUND_CHANCE = 0.05;
 const APP_MODE_STORAGE_KEY = "pokedex:mode";
 const CAPTURED_POKEMON_STORAGE_KEY = "pokedex:captured-pokemon";
+const SHINY_CAPTURED_POKEMON_STORAGE_KEY = "pokedex:shiny-captured-pokemon";
 const GAME_GENERATIONS_STORAGE_KEY = "pokedex:game-generations";
 const WHOSE_THAT_POKEMON_VIDEO_ID = "EE-xtCF3T94";
 const WHOSE_THAT_POKEMON_INTRO_SECONDS = 5;
@@ -271,11 +276,42 @@ function getSavedCapturedPokemonIds() {
   }
 }
 
+function getSavedShinyCapturedPokemonIds() {
+  try {
+    const savedShinyCaptures = window.localStorage.getItem(
+      SHINY_CAPTURED_POKEMON_STORAGE_KEY,
+    );
+
+    if (!savedShinyCaptures) {
+      return new Set<number>();
+    }
+
+    const parsedCaptures: unknown = JSON.parse(savedShinyCaptures);
+
+    if (!Array.isArray(parsedCaptures)) {
+      return new Set<number>();
+    }
+
+    return new Set(
+      parsedCaptures.filter(
+        (pokemonId): pokemonId is number =>
+          Number.isInteger(pokemonId) &&
+          pokemonId >= 1 &&
+          pokemonId <= GAME_POKEMON_COUNT,
+      ),
+    );
+  } catch {
+    return new Set<number>();
+  }
+}
+
 function CapturedPokemonCollection({
   capturedPokemonIds,
+  shinyCapturedPokemonIds,
   onClose,
 }: {
   capturedPokemonIds: Set<number>;
+  shinyCapturedPokemonIds: Set<number>;
   onClose: () => void;
 }) {
   const [pokemonIndex, setPokemonIndex] = useState<PokemonIndexEntry[]>([]);
@@ -348,16 +384,27 @@ function CapturedPokemonCollection({
             {pokemonIndex.map((pokemon, index) => {
               const pokemonId = index + 1;
               const isCaptured = capturedPokemonIds.has(pokemonId);
+              const isShinyCaptured = shinyCapturedPokemonIds.has(pokemonId);
 
               return (
-                <li className={isCaptured ? "is-captured" : "is-unknown"} key={pokemon.url}>
+                <li
+                  className={isCaptured ? (isShinyCaptured ? "is-captured is-shiny" : "is-captured") : "is-unknown"}
+                  key={pokemon.url}
+                >
                   <img
-                    alt={isCaptured ? formatPokemonName(pokemon.name) : "Unknown Pokemon silhouette"}
+                    alt={
+                      isCaptured
+                        ? `${formatPokemonName(pokemon.name)}${isShinyCaptured ? " (Shiny)" : ""}`
+                        : "Unknown Pokemon silhouette"
+                    }
                     loading="lazy"
-                    src={getSpriteUrl(pokemonId)}
+                    src={isShinyCaptured ? getShinySpriteUrl(pokemonId) : getSpriteUrl(pokemonId)}
                   />
                   <span className="collection-number">#{String(pokemonId).padStart(3, "0")}</span>
-                  <strong>{isCaptured ? formatPokemonName(pokemon.name) : "???"}</strong>
+                  <strong>
+                    {isCaptured ? formatPokemonName(pokemon.name) : "???"}
+                    {isShinyCaptured ? <em aria-label="Shiny captured"> ✦</em> : null}
+                  </strong>
                 </li>
               );
             })}
@@ -648,7 +695,110 @@ function WhosThatPokemonIntro({
 }
 
 function normalizePokemonName(name: string) {
-  return name.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+const VOICE_NAME_ALIASES: Record<string, string> = {
+  "far fetched": "farfetchd",
+  "far fetched d": "farfetchd",
+  "mister mime": "mrmime",
+  "mime junior": "mimejr",
+  "ho oh": "hooh",
+  "porygon z": "porygonz",
+  "type null": "typenull",
+  "tapu koko": "tapukoko",
+  "tapu lele": "tapulele",
+  "tapu bulu": "tapubulu",
+  "tapu fini": "tapufini",
+  "nidoran female": "nidoranf",
+  "nidoran f": "nidoranf",
+  "nidoran male": "nidoranm",
+  "nidoran m": "nidoranm",
+  electrobuzz: "electabuzz",
+  "om a night": "omanyte",
+  "feraligato": "feraligatr",
+  lydian: "ledian",
+};
+
+function normalizeVoicePokemonName(name: string) {
+  const normalizedWords = name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+
+  return normalizePokemonName(VOICE_NAME_ALIASES[normalizedWords] ?? normalizedWords);
+}
+
+function levenshteinDistance(left: string, right: string) {
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+
+  for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
+    let diagonal = previous[0];
+    previous[0] = leftIndex;
+
+    for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
+      const above = previous[rightIndex];
+      previous[rightIndex] = Math.min(
+        previous[rightIndex] + 1,
+        previous[rightIndex - 1] + 1,
+        diagonal + (left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1),
+      );
+      diagonal = above;
+    }
+  }
+
+  return previous[right.length];
+}
+
+function findVoicePokemonMatch(
+  transcript: string,
+  candidates: readonly VoicePokemonCandidate[],
+) {
+  const normalizedTranscript = normalizeVoicePokemonName(transcript);
+  const transcriptWords = transcript
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+  const phrases = new Set<string>([normalizedTranscript]);
+
+  for (let start = 0; start < transcriptWords.length; start += 1) {
+    for (let end = start + 1; end <= Math.min(transcriptWords.length, start + 4); end += 1) {
+      phrases.add(normalizeVoicePokemonName(transcriptWords.slice(start, end).join(" ")));
+    }
+  }
+
+  let bestMatch: { candidate: VoicePokemonCandidate; distance: number; phrase: string } | null = null;
+
+  for (const candidate of candidates) {
+    const normalizedCandidate = normalizePokemonName(candidate.name);
+
+    for (const phrase of phrases) {
+      if (!phrase) continue;
+      const distance = levenshteinDistance(phrase, normalizedCandidate);
+
+      if (!bestMatch || distance < bestMatch.distance) {
+        bestMatch = { candidate, distance, phrase };
+      }
+    }
+  }
+
+  if (!bestMatch) return null;
+
+  const allowedDistance =
+    bestMatch.phrase.length <= 4 || bestMatch.candidate.name.length <= 4
+      ? 1
+      : bestMatch.candidate.name.length <= 7
+        ? 2
+        : 3;
+
+  return bestMatch.distance <= allowedDistance ? bestMatch.candidate : null;
 }
 
 function formatPokemonName(name: string) {
@@ -1139,10 +1289,12 @@ function LandscapeTree({
 }
 
 const ScanEnvironment = memo(function ScanEnvironment({
+  concealed,
   habitat,
   isEvening,
   spriteUrl,
 }: {
+  concealed: boolean;
   habitat: string;
   isEvening: boolean;
   spriteUrl: string | null;
@@ -1247,20 +1399,20 @@ const ScanEnvironment = memo(function ScanEnvironment({
       ) : null}
       {hasCountryRoad ? (
         <group>
-          <mesh position={[3.45, -3.695, -6.7]} rotation={[-Math.PI / 2, 0.22, 0]} receiveShadow>
-            <planeGeometry args={[2.15, 11.8]} />
+          <mesh position={[1.65, -3.695, -6.7]} rotation={[-Math.PI / 2, 0.12, 0]} receiveShadow>
+            <planeGeometry args={[2.45, 13.2]} />
             <meshStandardMaterial color={isWetWeather ? "#6f6251" : "#a6835c"} roughness={isWetWeather ? 0.42 : 0.96} metalness={isWetWeather ? 0.12 : 0} />
           </mesh>
-          <mesh position={[2.23, -3.695, -13.0]} rotation={[-Math.PI / 2, -0.14, 0]} receiveShadow>
-            <planeGeometry args={[2.15, 9.6]} />
+          <mesh position={[1.25, -3.695, -13.3]} rotation={[-Math.PI / 2, -0.08, 0]} receiveShadow>
+            <planeGeometry args={[2.45, 9.8]} />
             <meshStandardMaterial color={isWetWeather ? "#6f6251" : "#a6835c"} roughness={isWetWeather ? 0.42 : 0.96} metalness={isWetWeather ? 0.12 : 0} />
           </mesh>
-          <mesh position={[3.45, -3.676, -6.7]} rotation={[-Math.PI / 2, 0.22, 0]}>
-            <planeGeometry args={[0.075, 11.9]} />
+          <mesh position={[1.65, -3.676, -6.7]} rotation={[-Math.PI / 2, 0.12, 0]}>
+            <planeGeometry args={[0.075, 13.3]} />
             <meshStandardMaterial color="#d6c39d" roughness={0.9} />
           </mesh>
-          <mesh position={[2.23, -3.676, -13.0]} rotation={[-Math.PI / 2, -0.14, 0]}>
-            <planeGeometry args={[0.075, 9.7]} />
+          <mesh position={[1.25, -3.676, -13.3]} rotation={[-Math.PI / 2, -0.08, 0]}>
+            <planeGeometry args={[0.075, 9.9]} />
             <meshStandardMaterial color="#d6c39d" roughness={0.9} />
           </mesh>
         </group>
@@ -1350,7 +1502,7 @@ const ScanEnvironment = memo(function ScanEnvironment({
           </mesh>
         </group>
       ) : null}
-      <group position={[2.55, -1.48, -7.35]} scale={1.9}>
+      <group position={[1.45, -1.48, -8.2]} scale={1.75}>
         <mesh castShadow>
           <sphereGeometry args={[0.82, 14, 10]} />
           <meshStandardMaterial color="#d9f0c5" roughness={0.72} />
@@ -1360,7 +1512,12 @@ const ScanEnvironment = memo(function ScanEnvironment({
           <meshStandardMaterial color={scene.foliage} roughness={0.9} />
         </mesh>
         <sprite position={[0, 0.03, 0.84]} scale={[1.8, 1.8, 1]}>
-          <spriteMaterial map={targetTexture} transparent depthWrite={false} />
+          <spriteMaterial
+            color={concealed ? "#050505" : "#ffffff"}
+            map={targetTexture}
+            transparent
+            depthWrite={false}
+          />
         </sprite>
       </group>
       <Rainfall enabled={isWetWeather} />
@@ -1389,14 +1546,9 @@ function PokedexModel({
   const { scene: handScene } = useGLTF("/PokedexHand.glb");
 
   return (
-    <group rotation={[0, -0.22, 0]} scale={2.55}>
+    <>
+    <group position={[0.7, -0.7, 0.35]} rotation={[0, 0.38, 0]} scale={2.15}>
       <primitive object={scene} />
-      <primitive
-        object={handScene}
-        position={[-2.75, -0.12, 2.4]}
-        rotation={[0, -0.18, 0]}
-        scale={1.7}
-      />
       <PokedexScreen
         animatedSpriteUrl={animatedSpriteUrl}
         concealed={concealed}
@@ -1407,6 +1559,13 @@ function PokedexModel({
       />
       <DPadControls onStep={onDPadStep} />
     </group>
+    <primitive
+      object={handScene}
+      position={[-0.4, -1.35, 3.2]}
+      rotation={[0, 0.38, 0]}
+      scale={1.7}
+    />
+    </>
   );
 }
 
@@ -1663,6 +1822,9 @@ function App() {
   const [capturedPokemonIds, setCapturedPokemonIds] = useState<Set<number>>(
     getSavedCapturedPokemonIds,
   );
+  const [shinyCapturedPokemonIds, setShinyCapturedPokemonIds] = useState<Set<number>>(
+    getSavedShinyCapturedPokemonIds,
+  );
   const [isCollectionOpen, setIsCollectionOpen] = useState(false);
   const [nextRoundSeconds, setNextRoundSeconds] = useState<number | null>(null);
   const [roundSecondsRemaining, setRoundSecondsRemaining] = useState(
@@ -1674,9 +1836,14 @@ function App() {
     () => initialMode === "game" && Math.random() < SHINY_ROUND_CHANCE,
   );
   const [voiceStatus, setVoiceStatus] = useState<
-    "idle" | "listening" | "unsupported" | "error"
+    "idle" | "waiting" | "listening" | "unsupported" | "error"
   >("idle");
   const [voiceMessage, setVoiceMessage] = useState("");
+  const [voiceEnabled, setVoiceEnabled] = useState(false);
+  const [voicePokemonIndex, setVoicePokemonIndex] = useState<
+    VoicePokemonCandidate[]
+  >([]);
+  const [isCryComplete, setIsCryComplete] = useState(false);
   const guessInputRef = useRef<HTMLInputElement>(null);
   const guessRef = useRef("");
   const recognitionRef = useRef<VoiceRecognition | null>(null);
@@ -1706,9 +1873,40 @@ function App() {
     );
     setSubmittedQuery(String(nextPokemonId));
     setIsIntroComplete(false);
+    setIsCryComplete(false);
     setIsHintVisible(false);
     setIsShinyRound(Math.random() < SHINY_ROUND_CHANCE);
   }, [selectedGenerations]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    async function loadVoicePokemonIndex() {
+      try {
+        const response = await fetch(
+          `https://pokeapi.co/api/v2/pokemon?limit=${GAME_POKEMON_COUNT}&offset=0`,
+          { signal: controller.signal },
+        );
+
+        if (!response.ok) {
+          throw new Error("Unable to load Pokemon names.");
+        }
+
+        const data = (await response.json()) as { results: PokemonIndexEntry[] };
+        setVoicePokemonIndex(
+          data.results.map((pokemon, index) => ({ ...pokemon, id: index + 1 })),
+        );
+      } catch (error) {
+        if (!(error instanceof DOMException && error.name === "AbortError")) {
+          setVoicePokemonIndex([]);
+        }
+      }
+    }
+
+    void loadVoicePokemonIndex();
+
+    return () => controller.abort();
+  }, []);
 
   useEffect(() => {
     window.localStorage.setItem(APP_MODE_STORAGE_KEY, mode);
@@ -1727,6 +1925,15 @@ function App() {
       JSON.stringify([...capturedPokemonIds].sort((left, right) => left - right)),
     );
   }, [capturedPokemonIds]);
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      SHINY_CAPTURED_POKEMON_STORAGE_KEY,
+      JSON.stringify(
+        [...shinyCapturedPokemonIds].sort((left, right) => left - right),
+      ),
+    );
+  }, [shinyCapturedPokemonIds]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -1826,15 +2033,22 @@ function App() {
     const cryUrl = pokemonState.pokemon.cries.latest ?? pokemonState.pokemon.cries.legacy;
 
     if (!cryUrl) {
-      return;
+      const completeWithoutCry = window.setTimeout(
+        () => setIsCryComplete(true),
+        0,
+      );
+      return () => window.clearTimeout(completeWithoutCry);
     }
 
     const cry = new Audio(cryUrl);
-    cry.play().catch(() => {
-      // Browsers can block sound until a user has interacted with the page.
-    });
+    const finishCry = () => setIsCryComplete(true);
+    cry.addEventListener("ended", finishCry, { once: true });
+    cry.addEventListener("error", finishCry, { once: true });
+    cry.play().catch(finishCry);
 
     return () => {
+      cry.removeEventListener("ended", finishCry);
+      cry.removeEventListener("error", finishCry);
       cry.pause();
       cry.currentTime = 0;
     };
@@ -1888,10 +2102,6 @@ function App() {
       return;
     }
 
-    if (!isIntroComplete) {
-      return;
-    }
-
     const interval = window.setInterval(() => {
       setRoundSecondsRemaining((seconds) => Math.max(0, seconds - 1));
     }, 1_000);
@@ -1905,7 +2115,7 @@ function App() {
       window.clearInterval(interval);
       window.clearTimeout(timeout);
     };
-  }, [isIntroComplete, mode, pokemonState, roundResult, submittedQuery]);
+  }, [mode, pokemonState, roundResult, submittedQuery]);
 
   useEffect(() => {
     if (
@@ -1985,7 +2195,7 @@ function App() {
 
     setSelectedGenerations(nextGenerations);
   };
-  const submitGuess = (submittedGuess = guessRef.current) => {
+  const submitGuess = useCallback((submittedGuess = guessRef.current) => {
     if (pokemonState.status !== "ready" || !submittedGuess.trim()) {
       return;
     }
@@ -2006,6 +2216,17 @@ function App() {
         nextCaptures.add(pokemonState.pokemon.id);
         return nextCaptures;
       });
+      if (isShinyRound) {
+        setShinyCapturedPokemonIds((currentShinyCaptures) => {
+          if (currentShinyCaptures.has(pokemonState.pokemon.id)) {
+            return currentShinyCaptures;
+          }
+
+          const nextShinyCaptures = new Set(currentShinyCaptures);
+          nextShinyCaptures.add(pokemonState.pokemon.id);
+          return nextShinyCaptures;
+        });
+      }
     } else {
       playIncorrectBuzz();
     }
@@ -2025,8 +2246,18 @@ function App() {
         correctAnswers: currentStats.correctAnswers + 1,
       };
     });
-  };
-  const startVoiceGuess = () => {
+  }, [isShinyRound, pokemonState, roundSecondsRemaining]);
+  const selectedVoicePokemonCandidates = useMemo(() => {
+    const selectedIds = new Set(getPokemonIdsForGenerations(selectedGenerations));
+    return voicePokemonIndex.filter((pokemon) => selectedIds.has(pokemon.id));
+  }, [selectedGenerations, voicePokemonIndex]);
+  const canListenForVoiceGuess =
+    mode === "game" &&
+    roundResult === "guessing" &&
+    pokemonState.status === "ready" &&
+    isIntroComplete &&
+    isCryComplete;
+  const startVoiceGuess = useCallback(() => {
     const Recognition = window.SpeechRecognition ?? window.webkitSpeechRecognition;
 
     if (!Recognition) {
@@ -2038,9 +2269,9 @@ function App() {
     recognitionRef.current?.abort();
     const recognition = new Recognition();
     recognitionRef.current = recognition;
-    recognition.continuous = false;
+    recognition.continuous = true;
     recognition.interimResults = true;
-    recognition.maxAlternatives = 1;
+    recognition.maxAlternatives = 3;
     // English Pokemon names are recognized most reliably with an English model.
     recognition.lang = "en-US";
     recognition.onresult = (event) => {
@@ -2055,14 +2286,31 @@ function App() {
       guessRef.current = transcript;
 
       if (result.isFinal) {
-        setVoiceStatus("idle");
-        setVoiceMessage(`Heard “${transcript}”. Sending guess…`);
+        const match = findVoicePokemonMatch(
+          transcript,
+          selectedVoicePokemonCandidates,
+        );
+
+        if (!match) {
+          setVoiceStatus("listening");
+          setVoiceMessage(`Heard “${transcript}”. Try saying a Pokemon name again.`);
+          return;
+        }
+
+        const matchedName = formatPokemonName(match.name);
+        setGuess(matchedName);
+        guessRef.current = matchedName;
+        setVoiceStatus("waiting");
+        setVoiceMessage(`Heard ${matchedName}. Sending guess…`);
         recognition.stop();
-        submitGuess(transcript);
+        submitGuess(matchedName);
       }
     };
     recognition.onerror = (event) => {
       recognitionRef.current = null;
+      if (event.error === "not-allowed") {
+        setVoiceEnabled(false);
+      }
       setVoiceStatus(event.error === "not-allowed" ? "error" : "idle");
       setVoiceMessage(
         event.error === "not-allowed"
@@ -2087,7 +2335,44 @@ function App() {
       setVoiceStatus("error");
       setVoiceMessage("Voice guessing could not start. Try again.");
     }
+  }, [selectedVoicePokemonCandidates, submitGuess]);
+  const toggleVoiceGuess = () => {
+    if (voiceEnabled) {
+      setVoiceEnabled(false);
+      recognitionRef.current?.abort();
+      recognitionRef.current = null;
+      setVoiceStatus("idle");
+      setVoiceMessage("Voice guesses are paused.");
+      return;
+    }
+
+    setVoiceEnabled(true);
+    if (canListenForVoiceGuess) {
+      startVoiceGuess();
+    } else {
+      setVoiceStatus("waiting");
+      setVoiceMessage("Now you wait — the Pokemon intro is playing.");
+    }
   };
+  useEffect(() => {
+    if (!voiceEnabled) {
+      return;
+    }
+
+    if (!canListenForVoiceGuess) {
+      recognitionRef.current?.abort();
+      recognitionRef.current = null;
+      const showWaitingState = window.setTimeout(() => {
+        setVoiceStatus("waiting");
+        setVoiceMessage("Now you wait — the Pokemon intro and cry are playing.");
+      }, 0);
+      return () => window.clearTimeout(showWaitingState);
+    }
+
+    if (!recognitionRef.current) {
+      startVoiceGuess();
+    }
+  }, [canListenForVoiceGuess, startVoiceGuess, voiceEnabled]);
   const loadPokemonByOffset = (delta: -1 | 1) => {
     const fallbackId = Number.parseInt(submittedQuery, 10);
     const currentId =
@@ -2122,8 +2407,7 @@ function App() {
     .join(" + ");
   const timedRevealAmount =
     mode === "game" &&
-    roundResult === "guessing" &&
-    isIntroComplete
+    roundResult === "guessing"
       ? (ROUND_TIME_LIMIT_SECONDS - roundSecondsRemaining) /
         ROUND_TIME_LIMIT_SECONDS
       : 0;
@@ -2156,6 +2440,7 @@ function App() {
           />
           <Suspense fallback={null}>
             <ScanEnvironment
+              concealed={mode === "game" && !isGameRoundRevealed}
               habitat={habitat}
               isEvening={isEvening}
               spriteUrl={spriteUrl}
@@ -2178,7 +2463,7 @@ function App() {
             maxPolarAngle={Math.PI / 2}
             minDistance={2.5}
             minPolarAngle={Math.PI / 4}
-            target={[0.7, 0.1, 0.2]}
+            target={[0.2, -0.9, -2.8]}
           />
         </Canvas>
       </section>
@@ -2392,18 +2677,25 @@ function App() {
             </div>
             <div className="voice-guess-controls">
               <button
-                aria-pressed={voiceStatus === "listening"}
+                aria-pressed={voiceEnabled}
                 className="voice-guess-button"
                 disabled={
-                  pokemonState.status !== "ready" || isGameRoundRevealed
+                  pokemonState.status !== "ready"
                 }
-                onClick={startVoiceGuess}
+                onClick={toggleVoiceGuess}
                 type="button"
               >
-                {voiceStatus === "listening" ? "Listening…" : "Listen"}
+                {voiceEnabled
+                  ? voiceStatus === "listening"
+                    ? "Stop listening"
+                    : "Stop voice guesses"
+                  : "Listen"}
               </button>
               <span aria-live="polite" className="voice-guess-status">
-                {voiceMessage || "Say a Pokemon name to fill and send your guess."}
+                {voiceMessage ||
+                  (voiceEnabled
+                    ? "Now you wait — listening resumes after the intro and cry."
+                    : "Listen once, then say a Pokemon name each round.")}
               </span>
             </div>
           </form>
@@ -2413,6 +2705,7 @@ function App() {
       {isCollectionOpen ? (
         <CapturedPokemonCollection
           capturedPokemonIds={capturedPokemonIds}
+          shinyCapturedPokemonIds={shinyCapturedPokemonIds}
           onClose={() => setIsCollectionOpen(false)}
         />
       ) : null}

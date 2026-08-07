@@ -394,6 +394,24 @@
   opacity: 0.82;
 }
 
+.collection-grid .is-shiny {
+  border-color: rgba(205, 156, 36, 0.8);
+  background:
+    linear-gradient(135deg, rgba(255, 241, 156, 0.54), transparent 55%),
+    #ffffff;
+  box-shadow: 0 0 0 1px rgba(255, 225, 100, 0.38), 0 4px 12px rgba(205, 156, 36, 0.18);
+}
+
+.collection-grid .is-shiny strong {
+  color: #8a6010;
+}
+
+.collection-grid strong em {
+  color: #d29a18;
+  font-size: 13px;
+  font-style: normal;
+}
+
 .collection-number {
   color: #71807b;
   font-size: 10px;
