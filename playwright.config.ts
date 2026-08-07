@@ -7,8 +7,8 @@ export default defineConfig({
     ...devices["Desktop Chrome"],
   },
   webServer: {
-    command: "pnpm preview --host 127.0.0.1 --port 4173",
+    command: "pnpm dev --host 127.0.0.1 --port 4173 --strictPort",
     port: 4173,
-    reuseExistingServer: true,
+    reuseExistingServer: false,
   },
 });
