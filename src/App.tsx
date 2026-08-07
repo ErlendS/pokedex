@@ -844,6 +844,7 @@ function App() {
     streak: 0,
     correctAnswers: 0,
   });
+  const [nextRoundSeconds, setNextRoundSeconds] = useState<number | null>(null);
   const [pokemonState, setPokemonState] = useState<PokemonState>({
     status: "loading",
     pokemon: null,
@@ -956,6 +957,34 @@ function App() {
     };
   }, [mode, pokemonState, roundResult, submittedQuery]);
 
+  const isGameRoundRevealed =
+    roundResult === "correct" || roundResult === "incorrect";
+
+  useEffect(() => {
+    if (mode !== "game" || !isGameRoundRevealed) {
+      return;
+    }
+
+    const kickoff = window.setTimeout(() => setNextRoundSeconds(10), 0);
+    const interval = window.setInterval(() => {
+      setNextRoundSeconds((seconds) =>
+        seconds === null || seconds <= 1 ? 1 : seconds - 1,
+      );
+    }, 1000);
+    const timeout = window.setTimeout(() => {
+      setGuess("");
+      setRoundResult("guessing");
+      setSubmittedQuery(String(getRandomKantoPokemonId()));
+      setNextRoundSeconds(null);
+    }, 10_000);
+
+    return () => {
+      window.clearInterval(interval);
+      window.clearTimeout(timeout);
+      window.clearTimeout(kickoff);
+    };
+  }, [isGameRoundRevealed, mode]);
+
   const spriteUrl =
     pokemonState.status === "ready"
       ? getSpriteUrl(pokemonState.pokemon.id)
@@ -967,8 +996,6 @@ function App() {
           .sort((left, right) => left.slot - right.slot)
           .map((pokemonType) => pokemonType.type.name)
       : ["normal"];
-  const isGameRoundRevealed =
-    roundResult === "correct" || roundResult === "incorrect";
   const flavorText =
     pokemonState.status === "ready" &&
     (mode === "lookup" || isGameRoundRevealed)
@@ -1106,6 +1133,9 @@ function App() {
                       pokemonState.status === "ready"
                     ? `Not quite. It's ${formatPokemonName(pokemonState.pokemon.name)}.`
                     : "Listen to the cry, then name the Pokemon hiding on the Pokedex screen."}
+                {nextRoundSeconds !== null
+                  ? ` Next round in ${nextRoundSeconds}s.`
+                  : ""}
               </p>
               <dl className="game-stats" aria-label="Current game session score">
                 <div>
@@ -1188,7 +1218,9 @@ function App() {
                 }
                 type="submit"
               >
-                {isGameRoundRevealed ? "Next" : "Guess"}
+                {isGameRoundRevealed
+                  ? `Next (${nextRoundSeconds ?? 10}s)`
+                  : "Guess"}
               </button>
             </div>
           </form>

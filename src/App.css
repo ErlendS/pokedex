@@ -40,10 +40,11 @@
 .control-panel {
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  gap: 32px;
+  justify-content: flex-start;
+  gap: 24px;
   min-height: 100svh;
-  padding: 48px 36px;
+  padding: 32px 36px;
+  overflow-y: auto;
   border-left: 1px solid rgba(28, 42, 38, 0.14);
   background: rgba(255, 255, 255, 0.82);
   box-sizing: border-box;
@@ -147,6 +148,22 @@
   color: #14201d;
   font-size: 19px;
   font-weight: 800;
+}
+
+@media (max-height: 700px) {
+  .control-panel {
+    gap: 14px;
+    padding-block: 20px;
+  }
+
+  .status {
+    min-height: 0;
+    margin-top: 8px;
+  }
+
+  .game-stats {
+    margin-top: 8px;
+  }
 }
 
 .lookup-form {
