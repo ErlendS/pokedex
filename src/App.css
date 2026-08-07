@@ -1,0 +1,135 @@
+.pokedex-app {
+  min-height: 100svh;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  background:
+    linear-gradient(90deg, rgba(20, 132, 101, 0.08), transparent 34%),
+    #f5faf7;
+}
+
+.viewer-shell {
+  min-height: 100svh;
+  position: relative;
+}
+
+.viewer-shell canvas {
+  display: block;
+}
+
+.control-panel {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 32px;
+  min-height: 100svh;
+  padding: 48px 36px;
+  border-left: 1px solid rgba(28, 42, 38, 0.14);
+  background: rgba(255, 255, 255, 0.82);
+  box-sizing: border-box;
+}
+
+.eyebrow {
+  margin: 0 0 12px;
+  color: #c8263e;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.control-panel h1 {
+  margin: 0;
+  color: #14201d;
+  font-size: 34px;
+  line-height: 1.08;
+  text-transform: capitalize;
+}
+
+.status {
+  min-height: 52px;
+  margin: 14px 0 0;
+  color: #53615d;
+  font-size: 15px;
+}
+
+.status.error {
+  color: #b51d33;
+}
+
+.lookup-form {
+  display: grid;
+  gap: 10px;
+}
+
+.lookup-form label {
+  color: #33413d;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.lookup-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
+.lookup-row input,
+.lookup-row button {
+  height: 44px;
+  border-radius: 6px;
+  font: inherit;
+  box-sizing: border-box;
+}
+
+.lookup-row input {
+  min-width: 0;
+  border: 1px solid rgba(28, 42, 38, 0.18);
+  padding: 0 12px;
+  color: #14201d;
+  background: #ffffff;
+}
+
+.lookup-row input:focus {
+  border-color: #258b69;
+  outline: 3px solid rgba(37, 139, 105, 0.22);
+}
+
+.lookup-row button {
+  border: 0;
+  padding: 0 18px;
+  color: #ffffff;
+  background: #c8263e;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.lookup-row button:hover {
+  background: #a91d32;
+}
+
+.lookup-row button:focus-visible {
+  outline: 3px solid rgba(200, 38, 62, 0.28);
+  outline-offset: 2px;
+}
+
+@media (max-width: 860px) {
+  .pokedex-app {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(420px, 62svh) auto;
+  }
+
+  .viewer-shell {
+    min-height: 420px;
+  }
+
+  .control-panel {
+    min-height: auto;
+    padding: 28px 20px 32px;
+    border-top: 1px solid rgba(28, 42, 38, 0.14);
+    border-left: 0;
+  }
+
+  .control-panel h1 {
+    font-size: 28px;
+  }
+}
