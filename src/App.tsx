@@ -409,6 +409,8 @@ function PokemonSprite({
   concealed: boolean;
   spriteUrl: string;
 }) {
+  const [isLoaded, setIsLoaded] = useState(false);
+
   return (
     <Html
       center
@@ -421,7 +423,9 @@ function PokemonSprite({
     >
       <img
         alt={concealed ? "Mystery Pokemon silhouette" : "Pokemon sprite"}
+        className={isLoaded ? "pokemon-sprite is-loaded" : "pokemon-sprite"}
         draggable={false}
+        onLoad={() => setIsLoaded(true)}
         src={spriteUrl}
         style={{
           display: "block",
@@ -429,6 +433,7 @@ function PokemonSprite({
           height: SPRITE_RENDER_SIZE,
           imageRendering: "pixelated",
           objectFit: "contain",
+          opacity: isLoaded ? 1 : 0,
           width: SPRITE_RENDER_SIZE,
         }}
       />
@@ -523,7 +528,7 @@ function DPadControls({ onStep }: { onStep: (delta: -1 | 1) => void }) {
       {dPadSegments.map((segment, index) => (
         <mesh
           key={segment.name}
-          position={[0, 0, index * 0.001 - (pressedSegment === segment.name ? 0.018 : 0)]}
+          position={[0, 0, index * 0.001 - (pressedSegment === segment.name ? 0.035 : 0)]}
           rotation={[0, 0, segment.rotation]}
           onClick={(event) => {
             event.stopPropagation();
@@ -547,21 +552,9 @@ function DPadControls({ onStep }: { onStep: (delta: -1 | 1) => void }) {
         >
           <shapeGeometry args={[dPadSegmentShape]} />
           <meshBasicMaterial
-            color={
-              SHOW_D_PAD_DEBUG_OVERLAY
-                ? "#00d1ff"
-                : pressedSegment === segment.name
-                  ? "#501a19"
-                  : "#ffffff"
-            }
+            color={SHOW_D_PAD_DEBUG_OVERLAY ? "#00d1ff" : "#ffffff"}
             depthWrite={false}
-            opacity={
-              SHOW_D_PAD_DEBUG_OVERLAY
-                ? 0.38
-                : pressedSegment === segment.name
-                  ? 0.58
-                  : 0.12
-            }
+            opacity={SHOW_D_PAD_DEBUG_OVERLAY ? 0.38 : 0.12}
             side={DoubleSide}
             transparent
           />
