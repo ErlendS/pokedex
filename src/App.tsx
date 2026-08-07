@@ -84,7 +84,7 @@ declare global {
 }
 
 const INITIAL_QUERY = "25";
-const KANTO_POKEMON_COUNT = 151;
+const GAME_POKEMON_COUNT = 251;
 const POKEDEX_SCREEN_POSITION: [number, number, number] = [0.053, 0.054, 0.685];
 const D_PAD_CENTER = {
   x: 0.078,
@@ -184,8 +184,8 @@ function getAnimatedSpriteUrl(pokemonId: number) {
   return `${ANIMATED_SPRITE_BASE_URL}/${pokemonId}.gif`;
 }
 
-function getRandomKantoPokemonId() {
-  return Math.floor(Math.random() * KANTO_POKEMON_COUNT) + 1;
+function getRandomGamePokemonId() {
+  return Math.floor(Math.random() * GAME_POKEMON_COUNT) + 1;
 }
 
 function normalizePokemonName(name: string) {
@@ -869,7 +869,7 @@ function App() {
   const [mode, setMode] = useState<AppMode>(initialMode);
   const [query, setQuery] = useState(INITIAL_QUERY);
   const [submittedQuery, setSubmittedQuery] = useState(
-    initialMode === "game" ? String(getRandomKantoPokemonId()) : INITIAL_QUERY,
+    initialMode === "game" ? String(getRandomGamePokemonId()) : INITIAL_QUERY,
   );
   const [guess, setGuess] = useState("");
   const [roundResult, setRoundResult] = useState<RoundResult>("guessing");
@@ -1016,7 +1016,7 @@ function App() {
     const timeout = window.setTimeout(() => {
       setGuess("");
       setRoundResult("guessing");
-      setSubmittedQuery(String(getRandomKantoPokemonId()));
+      setSubmittedQuery(String(getRandomGamePokemonId()));
       setNextRoundSeconds(null);
     }, NEXT_ROUND_DELAY_SECONDS * 1_000);
 
@@ -1068,7 +1068,7 @@ function App() {
   const startNewRound = () => {
     setGuess("");
     setRoundResult("guessing");
-    setSubmittedQuery(String(getRandomKantoPokemonId()));
+    setSubmittedQuery(String(getRandomGamePokemonId()));
   };
   const switchMode = (nextMode: AppMode) => {
     setMode(nextMode);
@@ -1173,7 +1173,7 @@ function App() {
 
         <div>
           <p className="eyebrow">
-            {mode === "game" ? "Kanto guessing game" : "Three.js Pokedex POC"}
+            {mode === "game" ? "Gen I + II guessing game" : "Three.js Pokedex POC"}
           </p>
           <h1>{pokemonLabel}</h1>
           {pokemonState.status === "error" ? (
