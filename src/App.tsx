@@ -50,8 +50,8 @@ const SHOW_D_PAD_DEBUG_OVERLAY = false;
 const FLAVOR_TEXT_FALLBACK = "No field notes available.";
 const SPRITE_RENDER_SIZE = 96;
 const SPRITE_HTML_SCALE = 0.15;
-const SHOWDOWN_SPRITE_BASE_URL =
-  "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/showdown";
+const SPRITE_BASE_URL =
+  "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon";
 
 function normalizeFlavorText(flavorText: string) {
   return flavorText
@@ -72,8 +72,8 @@ function getEnglishFlavorText(species: PokemonSpecies) {
   return entry ? normalizeFlavorText(entry.flavor_text) : FLAVOR_TEXT_FALLBACK;
 }
 
-function getShowdownSpriteUrl(pokemonId: number) {
-  return `${SHOWDOWN_SPRITE_BASE_URL}/${pokemonId}.gif`;
+function getSpriteUrl(pokemonId: number) {
+  return `${SPRITE_BASE_URL}/${pokemonId}.png`;
 }
 
 function wrapCanvasText(
@@ -232,6 +232,7 @@ function PokemonSprite({ spriteUrl }: { spriteUrl: string }) {
   return (
     <Html
       center
+      occlude
       position={[0, 0, 0.006]}
       scale={SPRITE_HTML_SCALE}
       style={{ pointerEvents: "none" }}
@@ -475,7 +476,7 @@ function App() {
 
   const spriteUrl =
     pokemonState.status === "ready"
-      ? getShowdownSpriteUrl(pokemonState.pokemon.id)
+      ? getSpriteUrl(pokemonState.pokemon.id)
       : null;
   const flavorText =
     pokemonState.status === "ready" ? pokemonState.flavorText : null;
@@ -502,7 +503,7 @@ function App() {
   return (
     <main className="pokedex-app">
       <section className="viewer-shell" aria-label="Interactive Pokedex model">
-        <Canvas camera={{ position: [5.5, 1.3, 2.6], fov: 56 }}>
+        <Canvas camera={{ position: [6.7, 1.6, 3.2], fov: 56 }}>
           <color attach="background" args={["#e8f6f0"]} />
           <ambientLight intensity={1.1} />
           <directionalLight position={[4, 4, 3]} intensity={2.4} />
