@@ -207,8 +207,8 @@ const POKEDEX_SCREEN_POSITION: [number, number, number] = [0.053, 0.054, 0.685];
 // app update makes controls re-apply their defaults after unrelated actions
 // such as selecting a generation.
 const VIEWER_CAMERA = {
-  position: [7.8, 2.35, 7.4] as [number, number, number],
-  fov: 55,
+  position: [10.6, 3.15, 10.3] as [number, number, number],
+  fov: 58,
 };
 const VIEWER_ORBIT_TARGET: [number, number, number] = [0, -0.9, -2.8];
 const POKEDEX_MODEL_POSITION: [number, number, number] = [0.7, -0.7, 0.35];
@@ -259,6 +259,7 @@ const NAME_REVEAL_UPGRADE_STORAGE_KEY = "pokedex:name-reveal-upgrade";
 const COMPLETED_ROUNDS_STORAGE_KEY = "pokedex:completed-rounds";
 const POKEDEX_SKINS_STORAGE_KEY = "pokedex:owned-skins";
 const POKEDEX_EQUIPPED_SKIN_STORAGE_KEY = "pokedex:equipped-skin";
+const HAND_TONE_STORAGE_KEY = "pokedex:hand-tone";
 const UNCAUGHT_RADAR_STORAGE_KEY = "pokedex:uncaught-radar";
 const INTRO_MUTED_STORAGE_KEY = "pokedex:intro-muted";
 type SkinRarity = "Common" | "Rare" | "Unique" | "Legendary";
@@ -274,6 +275,15 @@ type PokedexSkin = {
   metalness: number;
   roughness: number;
 };
+
+const HAND_TONES = [
+  { id: "fair", label: "Fair", color: "#f2c9ad" },
+  { id: "light", label: "Light", color: "#d9a784" },
+  { id: "medium", label: "Medium", color: "#b97852" },
+  { id: "deep", label: "Deep", color: "#7b442b" },
+  { id: "dark", label: "Dark", color: "#4b271e" },
+] as const;
+type HandToneId = (typeof HAND_TONES)[number]["id"];
 
 const SKIN_RARITY: Record<SkinRarity, { weight: number; metalness: number; roughness: number }> = {
   Common: { weight: 55, metalness: 0.1, roughness: 0.44 },
@@ -832,6 +842,99 @@ function getShinySpriteUrl(pokemonId: number) {
 
 function getAnimatedShinySpriteUrl(pokemonId: number) {
   return `${ANIMATED_SPRITE_BASE_URL}/shiny/${pokemonId}.gif`;
+}
+
+function drawSkinPattern(
+  canvas: HTMLCanvasElement,
+  skin: PokedexSkin,
+  phase: number,
+) {
+  const context = canvas.getContext("2d");
+  if (!context) return;
+
+  const { height, width } = canvas;
+  const patternKinds = ["Flower", "Lightning", "Flame", "Math"] as const;
+  const seed = [...skin.id].reduce((total, character) => total * 31 + character.charCodeAt(0), 17);
+  const patternKind = patternKinds[Math.abs(seed) % patternKinds.length];
+  const animatedPhase = phase * (0.72 + (Math.abs(seed) % 11) * 0.065) + seed * 0.019;
+  context.clearRect(0, 0, width, height);
+  context.lineWidth = 5;
+  context.lineCap = "round";
+
+  if (patternKind === "Flower") {
+    for (let x = 48; x < width; x += 112) {
+      for (let y = 44; y < height; y += 112) {
+        const wobble = Math.sin(animatedPhase * 2 + x * 0.02 + y * 0.02) * (5 + Math.abs(seed % 5));
+        context.save();
+        context.translate(x + wobble, y);
+        context.fillStyle = "hsl(48 100% 68%)";
+        for (let petal = 0; petal < 6; petal += 1) {
+          context.rotate(Math.PI / 3);
+          context.beginPath();
+          context.ellipse(0, -22, 11, 25, 0, 0, Math.PI * 2);
+          context.fill();
+        }
+        context.fillStyle = "hsl(24 92% 42%)";
+        context.beginPath();
+        context.arc(0, 0, 12, 0, Math.PI * 2);
+        context.fill();
+        context.restore();
+      }
+    }
+  } else if (patternKind === "Lightning") {
+    context.strokeStyle = "hsl(54 100% 72%)";
+    for (let x = -80; x < width + 80; x += 104) {
+      const offset = (animatedPhase * (34 + Math.abs(seed % 27))) % 104;
+      context.beginPath();
+      context.moveTo(x + offset, -12);
+      context.lineTo(x + 34 + offset, 80);
+      context.lineTo(x - 8 + offset, 80);
+      context.lineTo(x + 48 + offset, 184);
+      context.lineTo(x + 12 + offset, 184);
+      context.lineTo(x + 72 + offset, height + 12);
+      context.stroke();
+    }
+  } else if (patternKind === "Flame") {
+    for (let x = -20; x < width + 40; x += 58) {
+      const heightOffset = 30 + Math.sin(animatedPhase * 3 + x * 0.05) * (13 + Math.abs(seed % 14));
+      context.fillStyle = "hsl(42 100% 57%)";
+      context.beginPath();
+      context.moveTo(x, height + 8);
+      context.bezierCurveTo(x - 26, height - heightOffset, x + 7, height - heightOffset * 2.9, x + 20, height - 96);
+      context.bezierCurveTo(x + 51, height - heightOffset * 1.8, x + 36, height - 25, x + 48, height + 8);
+      context.fill();
+      context.fillStyle = "hsl(7 92% 50%)";
+      context.beginPath();
+      context.moveTo(x + 13, height + 8);
+      context.bezierCurveTo(x, height - 18, x + 24, height - 68, x + 28, height - 78);
+      context.bezierCurveTo(x + 44, height - 43, x + 30, height - 22, x + 39, height + 8);
+      context.fill();
+    }
+  } else {
+    context.strokeStyle = `hsl(${(skin.hue + 72) % 360} 92% 68%)`;
+    for (let radius = 28; radius < width; radius += 34) {
+      context.beginPath();
+      context.arc(width / 2, height / 2, radius + Math.sin(animatedPhase * 2 + radius) * (3 + Math.abs(seed % 7)), 0, Math.PI * 2);
+      context.stroke();
+    }
+    for (let x = 0; x < width; x += 38) {
+      context.beginPath();
+      context.moveTo(x, 0);
+      context.lineTo(width - x, height);
+      context.stroke();
+    }
+  }
+}
+
+function createSkinPatternTexture(skin: PokedexSkin) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 256;
+  canvas.height = 256;
+  drawSkinPattern(canvas, skin, 0);
+  const texture = new CanvasTexture(canvas);
+  texture.colorSpace = SRGBColorSpace;
+  texture.anisotropy = 4;
+  return texture;
 }
 
 function getPokemonIdsForGenerations(generationIds: readonly number[]) {
@@ -1726,6 +1829,43 @@ function MoonlitSky() {
   );
 }
 
+function Fireflies() {
+  const fireflies = useMemo(
+    () => Array.from({ length: 24 }, (_, index) => ({
+      x: -6 + ((index * 31) % 120) / 10,
+      y: -2.3 + ((index * 17) % 34) / 10,
+      z: -6.4 - ((index * 43) % 72) / 10,
+      phase: index * 0.73,
+    })),
+    [],
+  );
+
+  return (
+    <group>
+      {fireflies.map((firefly, index) => (
+        <Firefly key={index} {...firefly} />
+      ))}
+    </group>
+  );
+}
+
+function Firefly({ x, y, z, phase }: { x: number; y: number; z: number; phase: number }) {
+  const fireflyRef = useRef<Mesh>(null);
+  useFrame(({ clock }) => {
+    if (!fireflyRef.current) return;
+    const time = clock.getElapsedTime() + phase;
+    fireflyRef.current.position.set(x + Math.sin(time * 0.8) * 0.16, y + Math.cos(time * 1.1) * 0.13, z);
+    fireflyRef.current.scale.setScalar(0.65 + (Math.sin(time * 3) + 1) * 0.22);
+  });
+
+  return (
+    <mesh ref={fireflyRef} position={[x, y, z]}>
+      <sphereGeometry args={[0.035, 6, 5]} />
+      <meshBasicMaterial color="#e9ff8a" toneMapped={false} />
+    </mesh>
+  );
+}
+
 function LandscapeTree({
   foliage,
   index,
@@ -1905,6 +2045,7 @@ const ScanEnvironment = memo(function ScanEnvironment({
           />
         </>
       )}
+      {isCalmNightBiome ? <Fireflies /> : null}
       <mesh position={[0, -3.72, -9.2]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
         <planeGeometry args={[50, 48, 1, 1]} />
         <meshStandardMaterial color={scene.ground} roughness={1} />
@@ -2087,11 +2228,12 @@ function ScanTargetSprite({
   return (
     <Html
       center
+      occlude
       position={[0, 0.55, 0.9]}
       scale={0.46}
       style={{ pointerEvents: "none" }}
       transform
-      zIndexRange={[2, 0]}
+      zIndexRange={[0, -1]}
     >
       <img
         alt=""
@@ -2117,6 +2259,7 @@ function PokedexModel({
   revealAmount,
   skin,
   showShinyIndicator,
+  handTone,
   onDPadStep,
   spriteUrl,
   typeNames,
@@ -2127,6 +2270,7 @@ function PokedexModel({
   revealAmount: number;
   skin: PokedexSkinId;
   showShinyIndicator: boolean;
+  handTone: HandToneId;
   onDPadStep: (delta: -1 | 1) => void;
   spriteUrl: string | null;
   typeNames: string[];
@@ -2144,10 +2288,30 @@ function PokedexModel({
     });
     return clone;
   }, [scene]);
+  const skinnedHand = useMemo(() => {
+    const clone = handScene.clone(true);
+    clone.traverse((object) => {
+      if (object instanceof Mesh) {
+        object.material = Array.isArray(object.material)
+          ? object.material.map((material) => material.clone())
+          : object.material.clone();
+      }
+    });
+    return clone;
+  }, [handScene]);
+  const legendaryFinishMaterialsRef = useRef<MeshStandardMaterial[]>([]);
+  const selectedSkin = useMemo(
+    () => POKEDEX_SKIN_BY_ID.get(skin) ?? POKEDEX_SKIN_BY_ID.get("classic")!,
+    [skin],
+  );
+  const skinPatternTextureRef = useRef<CanvasTexture | null>(null);
+  const skinPatternCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
-    const selectedFinish = POKEDEX_SKIN_BY_ID.get(skin) ?? POKEDEX_SKIN_BY_ID.get("classic")!;
-
+    const skinPatternTexture = createSkinPatternTexture(selectedSkin);
+    skinPatternTextureRef.current = skinPatternTexture;
+    skinPatternCanvasRef.current = skinPatternTexture.image as HTMLCanvasElement;
+    const finishMaterials: MeshStandardMaterial[] = [];
     skinnedScene.traverse((object) => {
       if (!(object instanceof Mesh)) {
         return;
@@ -2160,18 +2324,73 @@ function PokedexModel({
           material instanceof MeshStandardMaterial &&
           (material.name === "Red" || material.name === "Pinkish")
         ) {
+          material.map = null;
+          material.emissiveMap = selectedSkin.rarity === "Legendary"
+            ? skinPatternTexture
+            : null;
           material.color.setHSL(
-            selectedFinish.hue / 360,
-            selectedFinish.saturation / 100,
-            selectedFinish.lightness / 100,
+            selectedSkin.hue / 360,
+            selectedSkin.saturation / 100,
+            selectedSkin.lightness / 100,
           );
-          material.metalness = selectedFinish.metalness;
-          material.roughness = selectedFinish.roughness;
+          material.emissive.set("#ffffff");
+          material.emissiveIntensity = selectedSkin.rarity === "Legendary" ? 0.5 : 0;
+          material.metalness = selectedSkin.metalness;
+          material.roughness = selectedSkin.roughness;
+          material.needsUpdate = true;
+          finishMaterials.push(material);
+        }
+      });
+    });
+    legendaryFinishMaterialsRef.current = finishMaterials;
+    return () => {
+      if (skinPatternTextureRef.current === skinPatternTexture) {
+        skinPatternTextureRef.current = null;
+        skinPatternCanvasRef.current = null;
+      }
+      skinPatternTexture.dispose();
+    };
+  }, [selectedSkin, skinnedScene]);
+
+  useFrame(({ clock }) => {
+    const elapsed = clock.getElapsedTime();
+    const skinPatternTexture = skinPatternTextureRef.current;
+    const skinPatternCanvas = skinPatternCanvasRef.current;
+    if (selectedSkin.rarity !== "Legendary") return;
+    if (skinPatternTexture && skinPatternCanvas) {
+      drawSkinPattern(skinPatternCanvas, selectedSkin, elapsed);
+      skinPatternTexture.needsUpdate = true;
+    }
+
+    const glow = 0.3 + (Math.sin(elapsed * 4) + 1) * 0.18;
+    legendaryFinishMaterialsRef.current.forEach((material) => {
+      material.color.setHSL(
+        selectedSkin.hue / 360,
+        selectedSkin.saturation / 100,
+        selectedSkin.lightness / 100,
+      );
+      material.emissive.set("#ffffff");
+      material.emissiveIntensity = glow;
+    });
+  });
+
+  useEffect(() => {
+    const selectedTone = HAND_TONES.find((tone) => tone.id === handTone) ?? HAND_TONES[2];
+    skinnedHand.traverse((object) => {
+      if (!(object instanceof Mesh)) return;
+      const materials = Array.isArray(object.material) ? object.material : [object.material];
+      materials.forEach((material) => {
+        if (material instanceof MeshStandardMaterial) {
+          material.color.set(selectedTone.color);
+          material.roughness = 0.72;
+          material.metalness = 0;
+          material.depthTest = true;
+          material.depthWrite = true;
           material.needsUpdate = true;
         }
       });
     });
-  }, [skin, skinnedScene]);
+  }, [handTone, skinnedHand]);
 
   return (
     <>
@@ -2193,10 +2412,10 @@ function PokedexModel({
       <DPadControls onStep={onDPadStep} />
     </group>
     <primitive
-      object={handScene}
-      position={[0.25, -1.35, 3.2]}
-      rotation={[0, -0.99, 0]}
-      scale={1.7}
+      object={skinnedHand}
+      position={[3.6, -1.55, -0.1]}
+      rotation={[0.06, Math.PI + 0.12, -0.18]}
+      scale={0.8}
     />
     </>
   );
@@ -2598,6 +2817,10 @@ function App() {
     () => getSavedOwnedSkins(),
   );
   const [equippedSkin, setEquippedSkin] = useState<PokedexSkinId>(() => (window.localStorage.getItem(POKEDEX_EQUIPPED_SKIN_STORAGE_KEY) as PokedexSkinId) || "classic");
+  const [handTone, setHandTone] = useState<HandToneId>(() => {
+    const savedTone = window.localStorage.getItem(HAND_TONE_STORAGE_KEY);
+    return HAND_TONES.some((tone) => tone.id === savedTone) ? savedTone as HandToneId : "medium";
+  });
   const [hasUncaughtRadar, setHasUncaughtRadar] = useState(() => window.localStorage.getItem(UNCAUGHT_RADAR_STORAGE_KEY) === "true");
   const [isIntroComplete, setIsIntroComplete] = useState(false);
   const [isHintVisible, setIsHintVisible] = useState(false);
@@ -2773,6 +2996,7 @@ function App() {
   }, [completedRounds]);
   useEffect(() => { window.localStorage.setItem(POKEDEX_SKINS_STORAGE_KEY, JSON.stringify([...ownedSkins])); }, [ownedSkins]);
   useEffect(() => { window.localStorage.setItem(POKEDEX_EQUIPPED_SKIN_STORAGE_KEY, equippedSkin); }, [equippedSkin]);
+  useEffect(() => { window.localStorage.setItem(HAND_TONE_STORAGE_KEY, handTone); }, [handTone]);
   useEffect(() => { window.localStorage.setItem(UNCAUGHT_RADAR_STORAGE_KEY, String(hasUncaughtRadar)); }, [hasUncaughtRadar]);
   useEffect(() => { window.localStorage.setItem(INTRO_MUTED_STORAGE_KEY, String(isIntroMuted)); }, [isIntroMuted]);
 
@@ -3415,12 +3639,6 @@ function App() {
           ))}
         </div>
       ) : null}
-      {isShinyRound && mode === "game" && !isGameRoundRevealed ? (
-        <div aria-live="polite" className="shiny-round-alert">
-          <span aria-hidden="true">✦ ✧ ✦</span>
-          <strong>Shiny found!</strong>
-        </div>
-      ) : null}
       {isShinyRound && isGameRoundRevealed ? (
         <div aria-hidden="true" className="shiny-orbit">
           {Array.from({ length: 8 }, (_, index) => <span key={index} />)}
@@ -3482,6 +3700,7 @@ function App() {
               animatedSpriteUrl={animatedSpriteUrl}
               concealed={isCurrentGamePokemonConcealed}
               flavorText={flavorText}
+              handTone={handTone}
               revealAmount={silhouetteRevealAmount}
               skin={equippedSkin}
               showShinyIndicator={
@@ -3623,6 +3842,23 @@ function App() {
                     <span style={{ width: `${(ownedSkins.size / POKEDEX_SKINS.length) * 100}%` }} />
                   </div>
                   <p className="skin-shop-copy">Win correct rounds for weighted drops, or spend {POKEDEX_SKIN_COST} points to unlock any skin.</p>
+                  <fieldset className="hand-tone-picker">
+                    <legend>Hand tone</legend>
+                    <div className="hand-tone-options">
+                      {HAND_TONES.map((tone) => (
+                        <button
+                          aria-label={`Use ${tone.label} hand tone`}
+                          aria-pressed={handTone === tone.id}
+                          key={tone.id}
+                          onClick={() => setHandTone(tone.id)}
+                          style={{ backgroundColor: tone.color }}
+                          type="button"
+                        >
+                          <span className="visually-hidden">{tone.label}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </fieldset>
                   <details className="skin-catalog">
                     <summary>Browse all {POKEDEX_SKINS.length} skins</summary>
                     <div className="skin-grid">

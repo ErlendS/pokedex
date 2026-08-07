@@ -39,12 +39,64 @@
 .skin-catalog { width: 100%; }
 .skin-catalog summary { cursor: pointer; font-weight: 700; color: #33413d; }
 .skin-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-top: 8px; max-height: 360px; overflow: auto; padding-right: 4px; }
-.skin-card { display: grid; grid-template-columns: 12px 1fr; align-items: center; gap: 3px 6px; text-align: left; padding: 6px; border: 1px solid #d8e2dc; border-radius: 8px; background: #fff; font: inherit; font-size: 11px; }
+.skin-card { display: grid; grid-template-columns: 12px 1fr; align-items: center; gap: 3px 6px; position: relative; isolation: isolate; overflow: hidden; text-align: left; padding: 6px; border: 1px solid #d8e2dc; border-radius: 8px; background: #fff; font: inherit; font-size: 11px; }
 .skin-card.is-equipped { outline: 2px solid hsl(var(--skin-hue, 358) var(--skin-saturation, 92%) var(--skin-lightness, 38%)); }
-.skin-swatch { width: 12px; height: 24px; border-radius: 4px; grid-row: span 3; }
+.skin-swatch { width: 12px; height: 24px; position: relative; overflow: hidden; border-radius: 4px; grid-row: span 3; }
 .skin-card-name { font-weight: 700; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .skin-rarity, .skin-card-action { color: #57665f; font-size: 10px; }
 .rarity-rare .skin-rarity { color: #2e65bd; }.rarity-unique .skin-rarity { color: #8b3cc7; }.rarity-legendary .skin-rarity { color: #a36400; font-weight: 800; }
+.rarity-legendary {
+  border-color: color-mix(in srgb, #d49400 48%, #fff);
+  box-shadow: inset 0 0 0 1px rgb(255 203 74 / 16%), 0 2px 8px rgb(156 100 0 / 8%);
+}
+
+.rarity-legendary::before {
+  position: absolute;
+  z-index: -1;
+  inset: -60%;
+  content: "";
+  opacity: 0.68;
+  background:
+    repeating-linear-gradient(60deg, transparent 0 15px, rgb(255 197 40 / 24%) 16px 18px, transparent 19px 36px),
+    repeating-linear-gradient(-60deg, transparent 0 15px, rgb(248 113 25 / 14%) 16px 18px, transparent 19px 36px);
+  transform: translateX(-18%);
+  animation: legendary-card-pattern 6s linear infinite;
+  pointer-events: none;
+}
+
+.rarity-legendary .skin-swatch {
+  box-shadow: 0 0 5px rgb(255 187 0 / 46%);
+  animation: legendary-skin-swatch 2.4s ease-in-out infinite;
+}
+
+.rarity-legendary .skin-swatch::after {
+  position: absolute;
+  inset: -100%;
+  content: "";
+  background: linear-gradient(125deg, transparent 38%, rgb(255 255 255 / 84%) 48%, transparent 58%);
+  transform: translateX(-62%);
+  animation: legendary-swatch-shine 2.4s ease-in-out infinite;
+}
+
+@keyframes legendary-skin-swatch {
+  0%, 100% { filter: brightness(1) saturate(1.05); box-shadow: 0 0 5px rgb(255 187 0 / 46%); }
+  50% { filter: brightness(1.18) saturate(1.32); box-shadow: 0 0 10px rgb(255 174 0 / 80%); }
+}
+
+@keyframes legendary-card-pattern {
+  to { transform: translateX(18%); }
+}
+
+@keyframes legendary-swatch-shine {
+  0%, 36% { transform: translateX(-62%); }
+  64%, 100% { transform: translateX(62%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rarity-legendary::before,
+  .rarity-legendary .skin-swatch,
+  .rarity-legendary .skin-swatch::after { animation: none; }
+}
 
 .viewer-shell {
   min-height: 100svh;
@@ -434,26 +486,6 @@
 .shiny-orbit span:nth-child(7) { --orbit-index: 6; }
 .shiny-orbit span:nth-child(8) { --orbit-index: 7; }
 
-.shiny-round-alert {
-  position: fixed;
-  z-index: 70;
-  top: 22px;
-  left: 50%;
-  display: grid;
-  gap: 4px;
-  place-items: center;
-  padding: 12px 22px;
-  border: 2px solid #fff3a0;
-  border-radius: 999px;
-  color: #fff8c9;
-  background: radial-gradient(circle, rgba(138, 79, 255, .96), rgba(35, 14, 80, .94));
-  box-shadow: 0 0 20px 8px rgba(255, 225, 81, .75);
-  transform: translateX(-50%);
-  animation: shiny-alert-pulse .9s ease-in-out infinite alternate;
-}
-
-@keyframes shiny-alert-pulse { to { box-shadow: 0 0 40px 18px rgba(255, 225, 81, .9); transform: translateX(-50%) scale(1.06); } }
-
 @keyframes shiny-orbit-spin { to { transform: translate(-50%, -50%) rotate(360deg); } }
 
 @keyframes firework-burst {
@@ -485,7 +517,6 @@
   .confetti-burst span,
   .shiny-fireworks span,
   .shiny-orbit,
-  .shiny-round-alert,
   .pokedex-app.is-shaking {
     animation: none;
   }
