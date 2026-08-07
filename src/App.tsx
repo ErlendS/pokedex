@@ -1513,7 +1513,6 @@ function PokedexScreen({
   flavorText,
   revealAmount,
   showShinyIndicator,
-  skin,
   spriteUrl,
   typeNames,
 }: {
@@ -1522,14 +1521,12 @@ function PokedexScreen({
   flavorText: string | null;
   revealAmount: number;
   showShinyIndicator: boolean;
-  skin: PokedexSkin;
   spriteUrl: string | null;
   typeNames: string[];
 }) {
   return (
     <group position={POKEDEX_SCREEN_POSITION} rotation={[0, Math.PI / 2, 0]}>
       <ScreenBackground typeNames={typeNames} />
-      <LegendarySkinDecal skin={skin} />
       {spriteUrl ? (
         <PokemonSprite
           animatedSpriteUrl={animatedSpriteUrl ?? spriteUrl}
@@ -1759,7 +1756,7 @@ function Aurora() {
     });
   });
   return (
-    <group ref={auroraRef} position={[0, 3.8, -15]}>
+    <group ref={auroraRef} position={[0, 4.6, -18]} scale={[2.25, 2.4, 1]}>
       {[
         [-3.4, "#66f7d2"], [-2.3, "#70a7ff"], [-1.1, "#f58bd9"], [0, "#b58cff"], [1.2, "#66f7d2"], [2.4, "#70a7ff"], [3.5, "#f58bd9"],
       ].map(([x, color], index) => (
@@ -2406,54 +2403,6 @@ function CompanionPokemon({ pokemonId, shiny }: { pokemonId: number; shiny: bool
   );
 }
 
-function LegendarySkinDecal({ skin }: { skin: PokedexSkin }) {
-  const trailRef = useRef<Group>(null);
-  const isFlame = skin.legendaryEffect === "Flame";
-
-  useFrame(({ clock }) => {
-    if (!trailRef.current) return;
-    const progress = (clock.getElapsedTime() * (isFlame ? 0.42 : 0.28)) % 1;
-    trailRef.current.position.y = -0.19 + progress * 0.38;
-    trailRef.current.rotation.z = isFlame ? Math.sin(clock.getElapsedTime() * 4) * 0.14 : clock.getElapsedTime() * 0.8;
-  });
-
-  if (skin.rarity !== "Legendary") return null;
-
-  return (
-    <group ref={trailRef} position={[0.19, -0.19, 0.018]}>
-      {isFlame ? (
-        <>
-          {[[-0.045, 0], [0, 0.04], [0.045, -0.01]].map(([x, y], index) => (
-            <mesh key={index} position={[x, y, 0]} scale={[0.045, 0.1 + index * 0.016, 1]}>
-              <coneGeometry args={[1, 1.8, 5]} />
-              <meshBasicMaterial color={index === 1 ? "#ffd34d" : "#ff652f"} toneMapped={false} transparent opacity={0.92} />
-            </mesh>
-          ))}
-        </>
-      ) : (
-        <>
-          {Array.from({ length: 20 }, (_, flowerIndex) => {
-            const lane = (flowerIndex % 5) - 2;
-            const vertical = -0.13 + Math.floor(flowerIndex / 5) * 0.087;
-            const size = 0.46 + (flowerIndex % 3) * 0.1;
-            return (
-              <group key={flowerIndex} position={[lane * 0.055 + Math.sin(flowerIndex * 1.7) * 0.014, vertical, 0]} scale={size}>
-                {Array.from({ length: 5 }, (_, petalIndex) => (
-                  <mesh key={petalIndex} position={[Math.cos(petalIndex * (Math.PI * 2 / 5)) * 0.047, Math.sin(petalIndex * (Math.PI * 2 / 5)) * 0.047, 0]} scale={[0.028, 0.05, 1]} rotation={[0, 0, petalIndex * (Math.PI * 2 / 5)]}>
-                    <sphereGeometry args={[1, 8, 6]} />
-                    <meshBasicMaterial color={flowerIndex % 3 === 0 ? "#ffb1d1" : flowerIndex % 3 === 1 ? "#ff82bb" : "#dca6ff"} toneMapped={false} />
-                  </mesh>
-                ))}
-                <mesh scale={0.024}><sphereGeometry args={[1, 8, 6]} /><meshBasicMaterial color="#ffd34d" toneMapped={false} /></mesh>
-              </group>
-            );
-          })}
-        </>
-      )}
-    </group>
-  );
-}
-
 function PokedexModel({
   animatedSpriteUrl,
   concealed,
@@ -2575,7 +2524,6 @@ function PokedexModel({
         flavorText={flavorText}
         revealAmount={revealAmount}
         showShinyIndicator={showShinyIndicator}
-        skin={selectedSkin}
         spriteUrl={spriteUrl}
         typeNames={typeNames}
       />
