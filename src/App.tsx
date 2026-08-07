@@ -1,8 +1,9 @@
 /** biome-ignore-all lint/a11y/noStaticElementInteractions: <explanation> */
-import { Html, OrbitControls, useGLTF } from "@react-three/drei";
-import { Canvas } from "@react-three/fiber";
+import { Cloud, Html, OrbitControls, Sky, useGLTF, useTexture } from "@react-three/drei";
+import { Canvas, useFrame } from "@react-three/fiber";
 import {
   Suspense,
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -12,7 +13,10 @@ import {
 import {
   CanvasTexture,
   DoubleSide,
+  Group,
+  InstancedMesh,
   LinearFilter,
+  Object3D,
   Shape,
   SRGBColorSpace,
 } from "three";
@@ -44,6 +48,7 @@ type FlavorTextEntry = {
 
 type PokemonSpecies = {
   flavor_text_entries: FlavorTextEntry[];
+  habitat: { name: string } | null;
 };
 
 type PokemonState =
@@ -52,17 +57,23 @@ type PokemonState =
       status: "ready";
       pokemon: Pokemon;
       flavorText: string;
+      habitat: string;
       error: "";
       query: string;
     }
   | { status: "error"; pokemon: null; error: string; query: "" };
 
 type AppMode = "lookup" | "game";
-type RoundResult = "guessing" | "correct" | "incorrect";
+type RoundResult = "guessing" | "correct" | "incorrect" | "timed-out";
 type GameStats = {
   score: number;
   streak: number;
   correctAnswers: number;
+};
+
+type PokemonIndexEntry = {
+  name: string;
+  url: string;
 };
 
 type DetectedBarcode = {
@@ -77,14 +88,84 @@ type BarcodeDetectorConstructor = new (options?: {
   formats?: string[];
 }) => BarcodeDetectorInstance;
 
+type YouTubePlayer = {
+  getIframe: () => HTMLIFrameElement;
+  loadVideoById: (video: {
+    videoId: string;
+    startSeconds: number;
+    endSeconds: number;
+  }) => void;
+  playVideo: () => void;
+  stopVideo: () => void;
+  unMute: () => void;
+};
+
+type YouTubePlayerEvent = {
+  data: number;
+};
+
+type YouTubePlayerConstructor = new (
+  elementId: string,
+  options: {
+    videoId: string;
+    playerVars: Record<string, number | string>;
+    events: {
+      onReady: () => void;
+      onStateChange: (event: YouTubePlayerEvent) => void;
+      onError: () => void;
+    };
+  },
+) => YouTubePlayer;
+
+type VoiceRecognitionAlternative = {
+  transcript: string;
+};
+
+type VoiceRecognitionResult = {
+  isFinal: boolean;
+  0: VoiceRecognitionAlternative;
+};
+
+type VoiceRecognitionEvent = {
+  resultIndex: number;
+  results: ArrayLike<VoiceRecognitionResult>;
+};
+
+type VoiceRecognitionErrorEvent = {
+  error: string;
+};
+
+type VoiceRecognition = {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  maxAlternatives: number;
+  onend: (() => void) | null;
+  onerror: ((event: VoiceRecognitionErrorEvent) => void) | null;
+  onresult: ((event: VoiceRecognitionEvent) => void) | null;
+  start: () => void;
+  stop: () => void;
+  abort: () => void;
+};
+
+type VoiceRecognitionConstructor = new () => VoiceRecognition;
+
 declare global {
   interface Window {
     BarcodeDetector?: BarcodeDetectorConstructor;
+    YT?: {
+      Player: YouTubePlayerConstructor;
+      PlayerState: { ENDED: number };
+    };
+    onYouTubeIframeAPIReady?: () => void;
+    SpeechRecognition?: VoiceRecognitionConstructor;
+    webkitSpeechRecognition?: VoiceRecognitionConstructor;
   }
 }
 
 const INITIAL_QUERY = "25";
-const GAME_POKEMON_COUNT = 251;
+const GAME_POKEMON_COUNT = 1_025;
+const RECENT_GAME_POKEMON_WINDOW = 25;
 const POKEDEX_SCREEN_POSITION: [number, number, number] = [0.053, 0.054, 0.685];
 const D_PAD_CENTER = {
   x: 0.078,
@@ -103,12 +184,188 @@ const SPRITE_BASE_URL =
 const ANIMATED_SPRITE_BASE_URL =
   "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/versions/generation-v/black-white/animated";
 const NEXT_ROUND_DELAY_SECONDS = 3;
+const ROUND_TIME_LIMIT_SECONDS = 20;
+const MAX_ROUND_POINTS = 100;
+const SHINY_ROUND_CHANCE = 0.05;
 const APP_MODE_STORAGE_KEY = "pokedex:mode";
+const CAPTURED_POKEMON_STORAGE_KEY = "pokedex:captured-pokemon";
+const GAME_GENERATIONS_STORAGE_KEY = "pokedex:game-generations";
+const WHOSE_THAT_POKEMON_VIDEO_ID = "EE-xtCF3T94";
+const WHOSE_THAT_POKEMON_INTRO_SECONDS = 5;
+const WHOSE_THAT_POKEMON_FALLBACK_MS =
+  (WHOSE_THAT_POKEMON_INTRO_SECONDS + 1) * 1_000;
+
+const GAME_GENERATIONS = [
+  { id: 1, label: "Gen I", start: 1, end: 151 },
+  { id: 2, label: "Gen II", start: 152, end: 251 },
+  { id: 3, label: "Gen III", start: 252, end: 386 },
+  { id: 4, label: "Gen IV", start: 387, end: 493 },
+  { id: 5, label: "Gen V", start: 494, end: 649 },
+  { id: 6, label: "Gen VI", start: 650, end: 721 },
+  { id: 7, label: "Gen VII", start: 722, end: 809 },
+  { id: 8, label: "Gen VIII", start: 810, end: 905 },
+  { id: 9, label: "Gen IX", start: 906, end: GAME_POKEMON_COUNT },
+] as const;
+
+const DEFAULT_GAME_GENERATIONS = [1, 2];
 
 function getSavedAppMode(): AppMode {
   const savedMode = window.localStorage.getItem(APP_MODE_STORAGE_KEY);
 
   return savedMode === "game" ? "game" : "lookup";
+}
+
+function getSavedGameGenerations() {
+  try {
+    const savedGenerations = window.localStorage.getItem(
+      GAME_GENERATIONS_STORAGE_KEY,
+    );
+    const parsedGenerations: unknown = savedGenerations
+      ? JSON.parse(savedGenerations)
+      : DEFAULT_GAME_GENERATIONS;
+
+    if (!Array.isArray(parsedGenerations)) {
+      return DEFAULT_GAME_GENERATIONS;
+    }
+
+    const validGenerations = parsedGenerations.filter(
+      (generationId): generationId is number =>
+        typeof generationId === "number" &&
+        GAME_GENERATIONS.some((generation) => generation.id === generationId),
+    );
+
+    return validGenerations.length > 0
+      ? [...new Set(validGenerations)].sort((left, right) => left - right)
+      : DEFAULT_GAME_GENERATIONS;
+  } catch {
+    return DEFAULT_GAME_GENERATIONS;
+  }
+}
+
+function getSavedCapturedPokemonIds() {
+  try {
+    const savedCaptures = window.localStorage.getItem(
+      CAPTURED_POKEMON_STORAGE_KEY,
+    );
+
+    if (!savedCaptures) {
+      return new Set<number>();
+    }
+
+    const parsedCaptures: unknown = JSON.parse(savedCaptures);
+
+    if (!Array.isArray(parsedCaptures)) {
+      return new Set<number>();
+    }
+
+    return new Set(
+      parsedCaptures.filter(
+        (pokemonId): pokemonId is number =>
+          Number.isInteger(pokemonId) &&
+          pokemonId >= 1 &&
+          pokemonId <= GAME_POKEMON_COUNT,
+      ),
+    );
+  } catch {
+    return new Set<number>();
+  }
+}
+
+function CapturedPokemonCollection({
+  capturedPokemonIds,
+  onClose,
+}: {
+  capturedPokemonIds: Set<number>;
+  onClose: () => void;
+}) {
+  const [pokemonIndex, setPokemonIndex] = useState<PokemonIndexEntry[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    async function loadPokemonIndex() {
+      try {
+        const response = await fetch(
+          `https://pokeapi.co/api/v2/pokemon?limit=${GAME_POKEMON_COUNT}&offset=0`,
+          { signal: controller.signal },
+        );
+
+        if (!response.ok) {
+          throw new Error("Unable to load the Pokedex.");
+        }
+
+        const data = (await response.json()) as { results: PokemonIndexEntry[] };
+        setPokemonIndex(data.results);
+      } catch (error) {
+        if (!(error instanceof DOMException && error.name === "AbortError")) {
+          setPokemonIndex([]);
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setIsLoading(false);
+        }
+      }
+    }
+
+    void loadPokemonIndex();
+
+    return () => controller.abort();
+  }, []);
+
+  return (
+    <div
+      aria-labelledby="collection-title"
+      aria-modal="true"
+      className="collection-backdrop"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
+      role="dialog"
+    >
+      <section className="collection-dialog">
+        <header className="collection-heading">
+          <div>
+            <p className="eyebrow">Your collection</p>
+            <h2 id="collection-title">Pokédex captured</h2>
+            <p>
+              {capturedPokemonIds.size} of {GAME_POKEMON_COUNT} Pokémon caught
+            </p>
+          </div>
+          <button aria-label="Close captured Pokemon" onClick={onClose} type="button">
+            ×
+          </button>
+        </header>
+
+        {isLoading ? <p className="collection-loading">Loading the Pokédex…</p> : null}
+        {!isLoading && pokemonIndex.length === 0 ? (
+          <p className="collection-loading">The Pokédex could not be loaded. Try again shortly.</p>
+        ) : null}
+        {pokemonIndex.length > 0 ? (
+          <ol className="collection-grid">
+            {pokemonIndex.map((pokemon, index) => {
+              const pokemonId = index + 1;
+              const isCaptured = capturedPokemonIds.has(pokemonId);
+
+              return (
+                <li className={isCaptured ? "is-captured" : "is-unknown"} key={pokemon.url}>
+                  <img
+                    alt={isCaptured ? formatPokemonName(pokemon.name) : "Unknown Pokemon silhouette"}
+                    loading="lazy"
+                    src={getSpriteUrl(pokemonId)}
+                  />
+                  <span className="collection-number">#{String(pokemonId).padStart(3, "0")}</span>
+                  <strong>{isCaptured ? formatPokemonName(pokemon.name) : "???"}</strong>
+                </li>
+              );
+            })}
+          </ol>
+        ) : null}
+      </section>
+    </div>
+  );
 }
 const POKEMON_SCAN_VALUE = /^(?:pokemon:)?([a-z0-9][a-z0-9-]{0,39})$/i;
 const TYPE_SCREEN_COLORS: Record<string, [string, string, string]> = {
@@ -184,8 +441,210 @@ function getAnimatedSpriteUrl(pokemonId: number) {
   return `${ANIMATED_SPRITE_BASE_URL}/${pokemonId}.gif`;
 }
 
-function getRandomGamePokemonId() {
-  return Math.floor(Math.random() * GAME_POKEMON_COUNT) + 1;
+function getShinySpriteUrl(pokemonId: number) {
+  return `${SPRITE_BASE_URL}/shiny/${pokemonId}.png`;
+}
+
+function getAnimatedShinySpriteUrl(pokemonId: number) {
+  return `${ANIMATED_SPRITE_BASE_URL}/shiny/${pokemonId}.gif`;
+}
+
+function getPokemonIdsForGenerations(generationIds: readonly number[]) {
+  return GAME_GENERATIONS.filter((generation) =>
+    generationIds.includes(generation.id),
+  ).flatMap((generation) =>
+    Array.from(
+      { length: generation.end - generation.start + 1 },
+      (_, index) => generation.start + index,
+    ),
+  );
+}
+
+function getRandomGamePokemonId(
+  generationIds: readonly number[],
+  recentPokemonIds: readonly number[] = [],
+) {
+  const recentPokemonIdSet = new Set(recentPokemonIds);
+  const selectedPokemonIds = getPokemonIdsForGenerations(generationIds);
+  const eligiblePokemonIds = selectedPokemonIds.filter(
+    (pokemonId) => !recentPokemonIdSet.has(pokemonId),
+  );
+
+  // This fallback keeps the selector safe if the game pool is ever smaller
+  // than the recent-round window.
+  const pokemonIds =
+    eligiblePokemonIds.length > 0
+      ? eligiblePokemonIds
+      : selectedPokemonIds;
+
+  return pokemonIds[Math.floor(Math.random() * pokemonIds.length)];
+}
+
+function rememberGamePokemonId(
+  recentPokemonIds: readonly number[],
+  pokemonId: number,
+) {
+  return [...recentPokemonIds.filter((recentId) => recentId !== pokemonId), pokemonId]
+    .slice(-RECENT_GAME_POKEMON_WINDOW);
+}
+
+function isEveningLocally() {
+  const localHour = new Date().getHours();
+
+  return localHour >= 18 || localHour < 6;
+}
+
+function playCorrectJingle() {
+  const audioContext = new AudioContext();
+  const now = audioContext.currentTime;
+
+  [523.25, 659.25, 783.99].forEach((frequency, index) => {
+    const oscillator = audioContext.createOscillator();
+    const gain = audioContext.createGain();
+    const start = now + index * 0.09;
+
+    oscillator.type = "square";
+    oscillator.frequency.setValueAtTime(frequency, start);
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(0.13, start + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.12);
+    oscillator.connect(gain).connect(audioContext.destination);
+    oscillator.start(start);
+    oscillator.stop(start + 0.13);
+  });
+
+  window.setTimeout(() => void audioContext.close(), 500);
+}
+
+function playIncorrectBuzz() {
+  const audioContext = new AudioContext();
+  const now = audioContext.currentTime;
+  const oscillator = audioContext.createOscillator();
+  const gain = audioContext.createGain();
+
+  oscillator.type = "triangle";
+  oscillator.frequency.setValueAtTime(180, now);
+  oscillator.frequency.exponentialRampToValueAtTime(120, now + 0.18);
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(0.075, now + 0.015);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.2);
+  oscillator.connect(gain).connect(audioContext.destination);
+  oscillator.start(now);
+  oscillator.stop(now + 0.21);
+
+  window.setTimeout(() => void audioContext.close(), 350);
+}
+
+function WhosThatPokemonIntro({
+  playbackKey,
+  onComplete,
+}: {
+  playbackKey: string | null;
+  onComplete: () => void;
+}) {
+  const playerRef = useRef<YouTubePlayer | null>(null);
+  const [isReady, setIsReady] = useState(false);
+  const completedPlaybackRef = useRef<string | null>(null);
+  const onCompleteRef = useRef(onComplete);
+
+  useEffect(() => {
+    onCompleteRef.current = onComplete;
+  }, [onComplete]);
+
+  const completePlayback = useCallback(() => {
+    if (!playbackKey || completedPlaybackRef.current === playbackKey) {
+      return;
+    }
+
+    completedPlaybackRef.current = playbackKey;
+    playerRef.current?.stopVideo();
+    onCompleteRef.current();
+  }, [playbackKey]);
+
+  useEffect(() => {
+    const initializePlayer = () => {
+      if (!window.YT || playerRef.current) {
+        return;
+      }
+
+      playerRef.current = new window.YT.Player("whos-that-pokemon-youtube", {
+        videoId: WHOSE_THAT_POKEMON_VIDEO_ID,
+        playerVars: {
+          autoplay: 0,
+          controls: 0,
+          disablekb: 1,
+          fs: 0,
+          modestbranding: 1,
+          playsinline: 1,
+          rel: 0,
+          origin: window.location.origin,
+        },
+        events: {
+          onReady: () => {
+            playerRef.current
+              ?.getIframe()
+              .setAttribute("allow", "autoplay; encrypted-media");
+            setIsReady(true);
+          },
+          onStateChange: (event) => {
+            if (event.data === window.YT?.PlayerState.ENDED) {
+              completePlayback();
+            }
+          },
+          onError: completePlayback,
+        },
+      });
+    };
+
+    if (window.YT?.Player) {
+      initializePlayer();
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = "https://www.youtube.com/iframe_api";
+    script.async = true;
+    window.onYouTubeIframeAPIReady = initializePlayer;
+    document.head.append(script);
+
+    return () => {
+      window.onYouTubeIframeAPIReady = undefined;
+      script.remove();
+    };
+  }, [completePlayback]);
+
+  useEffect(() => {
+    if (!playbackKey || !isReady || !playerRef.current) {
+      return;
+    }
+
+    completedPlaybackRef.current = null;
+    playerRef.current.unMute();
+    playerRef.current.loadVideoById({
+      videoId: WHOSE_THAT_POKEMON_VIDEO_ID,
+      startSeconds: 0,
+      endSeconds: WHOSE_THAT_POKEMON_INTRO_SECONDS,
+    });
+  }, [isReady, playbackKey]);
+
+  useEffect(() => {
+    if (!playbackKey) {
+      return;
+    }
+
+    const fallback = window.setTimeout(
+      completePlayback,
+      WHOSE_THAT_POKEMON_FALLBACK_MS,
+    );
+
+    return () => window.clearTimeout(fallback);
+  }, [completePlayback, playbackKey]);
+
+  return (
+    <div aria-hidden="true" className="youtube-intro-player">
+      <div id="whos-that-pokemon-youtube" />
+    </div>
+  );
 }
 
 function normalizePokemonName(name: string) {
@@ -424,10 +883,12 @@ function ScreenBackground({ typeNames }: { typeNames: string[] }) {
 function PokemonSprite({
   animatedSpriteUrl,
   concealed,
+  revealAmount,
   spriteUrl,
 }: {
   animatedSpriteUrl: string;
   concealed: boolean;
+  revealAmount: number;
   spriteUrl: string;
 }) {
   const [isLoaded, setIsLoaded] = useState(false);
@@ -456,7 +917,7 @@ function PokemonSprite({
         src={displayUrl}
         style={{
           display: "block",
-          filter: concealed ? "brightness(0)" : "none",
+          filter: concealed ? `brightness(${revealAmount})` : "none",
           height: SPRITE_RENDER_SIZE,
           imageRendering: "pixelated",
           objectFit: "contain",
@@ -499,12 +960,14 @@ function PokedexScreen({
   animatedSpriteUrl,
   concealed,
   flavorText,
+  revealAmount,
   spriteUrl,
   typeNames,
 }: {
   animatedSpriteUrl: string | null;
   concealed: boolean;
   flavorText: string | null;
+  revealAmount: number;
   spriteUrl: string | null;
   typeNames: string[];
 }) {
@@ -515,6 +978,7 @@ function PokedexScreen({
         <PokemonSprite
           animatedSpriteUrl={animatedSpriteUrl ?? spriteUrl}
           concealed={concealed}
+          revealAmount={revealAmount}
           key={spriteUrl}
           spriteUrl={spriteUrl}
         />
@@ -600,10 +1064,315 @@ function DPadControls({ onStep }: { onStep: (delta: -1 | 1) => void }) {
   );
 }
 
+function Rainfall({ enabled }: { enabled: boolean }) {
+  const meshRef = useRef<InstancedMesh>(null);
+  const dummy = useMemo(() => new Object3D(), []);
+  const drops = useMemo(
+    () =>
+      Array.from({ length: 96 }, (_, index) => ({
+        x: ((index * 37) % 19) - 9.5,
+        y: -3 + ((index * 53) % 82) / 10,
+        z: -4.5 - ((index * 71) % 145) / 10,
+        speed: 4.8 + (index % 5) * 0.42,
+      })),
+    [],
+  );
+
+  useFrame((_, delta) => {
+    if (!enabled || !meshRef.current) return;
+
+    drops.forEach((drop, index) => {
+      drop.y -= delta * drop.speed;
+      if (drop.y < -3.55) drop.y = 4.9 + (index % 7) * 0.18;
+      dummy.position.set(drop.x, drop.y, drop.z);
+      dummy.rotation.set(0.16, 0, 0);
+      dummy.updateMatrix();
+      meshRef.current?.setMatrixAt(index, dummy.matrix);
+    });
+    meshRef.current.instanceMatrix.needsUpdate = true;
+  });
+
+  if (!enabled) return null;
+
+  return (
+    <instancedMesh ref={meshRef} args={[undefined, undefined, drops.length]}>
+      <boxGeometry args={[0.018, 0.42, 0.018]} />
+      <meshBasicMaterial color="#b9dcf0" transparent opacity={0.62} />
+    </instancedMesh>
+  );
+}
+
+function LandscapeTree({
+  foliage,
+  index,
+  position,
+}: {
+  foliage: string;
+  index: number;
+  position: readonly [number, number, number];
+}) {
+  const treeRef = useRef<Group>(null);
+  const phase = index * 0.84;
+
+  useFrame(({ clock }) => {
+    if (treeRef.current) {
+      treeRef.current.rotation.z = Math.sin(clock.getElapsedTime() * 0.65 + phase) * 0.022;
+    }
+  });
+
+  return (
+    <group ref={treeRef} position={[position[0], -2.68, position[1]]} scale={position[2]}>
+      <mesh position={[0, -0.55, 0]}>
+        <cylinderGeometry args={[0.13, 0.18, 1.3, 6]} />
+        <meshStandardMaterial color="#65412a" roughness={1} />
+      </mesh>
+      <mesh position={[0, 0.25, 0]}>
+        <coneGeometry args={[0.8, 1.8, 7]} />
+        <meshStandardMaterial color={index % 2 === 0 ? foliage : "#4d9750"} roughness={0.9} />
+      </mesh>
+      <mesh position={[0.12, 0.83, -0.04]} scale={[0.72, 0.72, 0.72]}>
+        <coneGeometry args={[0.8, 1.8, 7]} />
+        <meshStandardMaterial color="#5aa553" roughness={0.9} />
+      </mesh>
+    </group>
+  );
+}
+
+const ScanEnvironment = memo(function ScanEnvironment({
+  habitat,
+  isEvening,
+  spriteUrl,
+}: {
+  habitat: string;
+  isEvening: boolean;
+  spriteUrl: string | null;
+}) {
+  const targetTexture = useTexture(spriteUrl ?? getSpriteUrl(25));
+  const [isWetWeather, setIsWetWeather] = useState(false);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    async function loadOsloWeather() {
+      try {
+        const response = await fetch(
+          "https://api.open-meteo.com/v1/forecast?latitude=59.9139&longitude=10.7522&current=precipitation,weather_code&timezone=Europe%2FOslo",
+          { signal: controller.signal },
+        );
+        if (!response.ok) return;
+        const data = (await response.json()) as {
+          current?: { precipitation?: number; weather_code?: number };
+        };
+        const code = data.current?.weather_code ?? 0;
+        setIsWetWeather((data.current?.precipitation ?? 0) > 0.05 || code >= 51);
+      } catch {
+        // The landscape remains clear if the optional weather lookup is unavailable.
+      }
+    }
+    void loadOsloWeather();
+    return () => controller.abort();
+  }, []);
+  const scene = {
+    cave: { ground: "#6f7667", foliage: "#5d744d", water: false, mountains: true },
+    forest: { ground: "#2f6e3c", foliage: "#24653a", water: false, mountains: false },
+    grassland: { ground: "#5da34a", foliage: "#347c3c", water: false, mountains: false },
+    mountain: { ground: "#6d8263", foliage: "#405f45", water: false, mountains: true },
+    rare: { ground: "#568f48", foliage: "#427b4a", water: false, mountains: false },
+    "rough-terrain": { ground: "#6f815a", foliage: "#4d7142", water: false, mountains: true },
+    sea: { ground: "#2e7db0", foliage: "#367d5c", water: true, mountains: false },
+    "waters-edge": { ground: "#d5bd77", foliage: "#467f48", water: true, mountains: false },
+    urban: { ground: "#75838b", foliage: "#5e7968", water: false, mountains: false },
+  }[habitat] ?? {
+    ground: "#568f48",
+    foliage: "#427b4a",
+    water: false,
+    mountains: false,
+  };
+  const denseForest = habitat === "forest" || habitat === "rare";
+  const hasCountryRoad = !scene.water && habitat !== "cave";
+  const hasCottage = !scene.water && habitat !== "cave" && habitat !== "mountain";
+  const trees = (denseForest
+    ? [
+        [-6.1, -7.6, 1.28], [-5.0, -8.5, 1.06], [-4.1, -10.2, 1.42],
+        [-2.7, -8.2, 1.08], [-1.7, -11.2, 1.34], [0.9, -10.6, 1.14],
+        [2.2, -8.3, 1.23], [3.65, -9.4, 1.45], [4.8, -7.8, 1.04],
+        [5.9, -10.9, 1.38],
+      ]
+    : [
+        [-5.55, -8.35, 1.0], [-3.7, -10.45, 1.18], [-1.85, -11.8, 0.9],
+        [3.85, -10.35, 1.12], [5.4, -8.45, 1.02],
+      ]) as ReadonlyArray<readonly [number, number, number]>;
+  const bushes = [
+    [-4.65, -7.35, 0.42], [-3.05, -8.2, 0.3], [-1.35, -8.9, 0.38],
+    [0.15, -8.35, 0.32], [3.15, -7.65, 0.44], [4.75, -8.75, 0.34],
+  ] as const;
+  const wildflowers = [
+    [-5.8, -6.6], [-4.3, -7.4], [-3.35, -6.95], [-2.1, -8.25],
+    [-0.8, -7.3], [1.15, -7.8], [2.3, -6.72], [3.65, -7.65], [5.3, -6.95],
+  ] as const;
+  const fencePosts = [
+    [-4.8, -6.4], [-3.7, -6.95], [-2.6, -7.5], [2.95, -7.4], [4.15, -6.8],
+    [5.3, -6.25],
+  ] as const;
+
+  return (
+    <group>
+      <Sky
+        distance={450000}
+        inclination={isEvening ? 0.53 : 0.5}
+        azimuth={0.18}
+        rayleigh={isEvening ? 1.2 : 2}
+        sunPosition={isEvening ? [-5, 0.35, -6] : [4, 2, -6]}
+      />
+      <Cloud
+        position={[-3.2, 2.8, -5.5]}
+        scale={1.4}
+        speed={0.12}
+        opacity={isWetWeather ? 0.9 : isEvening ? 0.52 : 0.72}
+      />
+      <Cloud
+        position={[2.6, 3.3, -6.8]}
+        scale={1.1}
+        speed={0.08}
+        opacity={isWetWeather ? 0.82 : isEvening ? 0.42 : 0.6}
+      />
+      <mesh position={[0, -3.72, -9.2]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+        <planeGeometry args={[50, 48, 1, 1]} />
+        <meshStandardMaterial color={scene.ground} roughness={1} />
+      </mesh>
+      {scene.water ? (
+        <mesh position={[2.8, -3.65, -8.55]} rotation={[-Math.PI / 2, 0, 0]}>
+          <planeGeometry args={[18, 20, 1, 1]} />
+          <meshStandardMaterial color="#3b9ed3" metalness={0.1} roughness={0.38} />
+        </mesh>
+      ) : null}
+      {hasCountryRoad ? (
+        <group>
+          <mesh position={[3.45, -3.695, -6.7]} rotation={[-Math.PI / 2, 0.22, 0]} receiveShadow>
+            <planeGeometry args={[2.15, 11.8]} />
+            <meshStandardMaterial color={isWetWeather ? "#6f6251" : "#a6835c"} roughness={isWetWeather ? 0.42 : 0.96} metalness={isWetWeather ? 0.12 : 0} />
+          </mesh>
+          <mesh position={[2.23, -3.695, -13.0]} rotation={[-Math.PI / 2, -0.14, 0]} receiveShadow>
+            <planeGeometry args={[2.15, 9.6]} />
+            <meshStandardMaterial color={isWetWeather ? "#6f6251" : "#a6835c"} roughness={isWetWeather ? 0.42 : 0.96} metalness={isWetWeather ? 0.12 : 0} />
+          </mesh>
+          <mesh position={[3.45, -3.676, -6.7]} rotation={[-Math.PI / 2, 0.22, 0]}>
+            <planeGeometry args={[0.075, 11.9]} />
+            <meshStandardMaterial color="#d6c39d" roughness={0.9} />
+          </mesh>
+          <mesh position={[2.23, -3.676, -13.0]} rotation={[-Math.PI / 2, -0.14, 0]}>
+            <planeGeometry args={[0.075, 9.7]} />
+            <meshStandardMaterial color="#d6c39d" roughness={0.9} />
+          </mesh>
+        </group>
+      ) : null}
+      {trees.map((tree, index) => (
+        <LandscapeTree
+          foliage={scene.foliage}
+          index={index}
+          key={`tree-${tree[0]}-${tree[1]}`}
+          position={tree}
+        />
+      ))}
+      {bushes.map(([x, z, scale]) => (
+        <mesh key={`bush-${x}-${z}`} position={[x, -3.3, z]} scale={scale}>
+          <dodecahedronGeometry args={[1, 0]} />
+          <meshStandardMaterial color={scene.foliage} flatShading roughness={1} />
+        </mesh>
+      ))}
+      {wildflowers.map(([x, z], index) => (
+        <group key={`flower-${x}-${z}`} position={[x, -3.48, z]}>
+          <mesh position={[0, 0.12, 0]}>
+            <cylinderGeometry args={[0.012, 0.02, 0.24, 4]} />
+            <meshStandardMaterial color="#386d38" roughness={1} />
+          </mesh>
+          <mesh position={[0, 0.26, 0]}>
+            <sphereGeometry args={[0.075, 5, 4]} />
+            <meshStandardMaterial color={index % 3 === 0 ? "#f2d96b" : index % 3 === 1 ? "#f49bb3" : "#d8d0ff"} roughness={0.85} />
+          </mesh>
+        </group>
+      ))}
+      {hasCountryRoad ? fencePosts.map(([x, z], index) => (
+        <group key={`fence-${x}-${z}`} position={[x, -3.35, z]}>
+          <mesh>
+            <boxGeometry args={[0.09, 0.6, 0.09]} />
+            <meshStandardMaterial color="#75543a" roughness={1} />
+          </mesh>
+          {index > 0 ? <mesh position={[index < 3 ? 0.56 : -0.56, -0.05, 0.28]} rotation={[0, index < 3 ? 0.5 : -0.5, 0]}>
+            <boxGeometry args={[1.28, 0.055, 0.055]} />
+            <meshStandardMaterial color="#8d6746" roughness={1} />
+          </mesh> : null}
+        </group>
+      )) : null}
+      {[
+        [-5.3, -7.2, 0.24],
+        [-2.55, -7.85, 0.18],
+        [1.3, -7.4, 0.22],
+        [4.95, -7.3, 0.28],
+      ].map(([x, z, scale]) => (
+        <mesh key={`rock-${x}-${z}`} position={[x, -3.47, z]} scale={scale}>
+          <dodecahedronGeometry args={[1, 0]} />
+          <meshStandardMaterial color="#65736b" flatShading roughness={1} />
+        </mesh>
+      ))}
+      {scene.mountains ? (
+        <group position={[0.7, -2.18, -12.8]}>
+          <mesh position={[-3.5, 0.55, 0]} scale={[2.4, 2.8, 1.5]}>
+            <coneGeometry args={[1, 1.8, 6]} />
+            <meshStandardMaterial color="#66736a" flatShading roughness={1} />
+          </mesh>
+          <mesh position={[0.25, 0.9, -0.5]} scale={[3.1, 3.9, 1.8]}>
+            <coneGeometry args={[1, 1.8, 6]} />
+            <meshStandardMaterial color="#59675f" flatShading roughness={1} />
+          </mesh>
+          <mesh position={[3.75, 0.4, 0]} scale={[1.9, 2.3, 1.3]}>
+            <coneGeometry args={[1, 1.8, 6]} />
+            <meshStandardMaterial color="#71806d" flatShading roughness={1} />
+          </mesh>
+        </group>
+      ) : null}
+      {hasCottage ? (
+        <group position={[-3.8, -2.67, -11.2]} rotation={[0, 0.34, 0]}>
+          <mesh castShadow receiveShadow>
+            <boxGeometry args={[2.35, 1.45, 1.7]} />
+            <meshStandardMaterial color={habitat === "urban" ? "#b5a38c" : "#d4b17b"} roughness={0.92} />
+          </mesh>
+          <mesh position={[0, 1.04, 0]} rotation={[0, Math.PI / 4, 0]} castShadow>
+            <coneGeometry args={[1.7, 1.1, 4]} />
+            <meshStandardMaterial color="#9a493c" roughness={0.95} />
+          </mesh>
+          <mesh position={[0, -0.35, 0.87]}>
+            <boxGeometry args={[0.48, 0.76, 0.045]} />
+            <meshStandardMaterial color="#65422d" roughness={0.9} />
+          </mesh>
+          <mesh position={[-0.72, 0.12, 0.88]}>
+            <boxGeometry args={[0.44, 0.42, 0.05]} />
+            <meshStandardMaterial color={isEvening ? "#ffd47a" : "#7bbbd0"} emissive={isEvening ? "#d89431" : "#000000"} emissiveIntensity={isEvening ? 0.8 : 0} />
+          </mesh>
+        </group>
+      ) : null}
+      <group position={[2.55, -1.48, -7.35]} scale={1.9}>
+        <mesh castShadow>
+          <sphereGeometry args={[0.82, 14, 10]} />
+          <meshStandardMaterial color="#d9f0c5" roughness={0.72} />
+        </mesh>
+        <mesh position={[0, -0.88, 0]} castShadow>
+          <cylinderGeometry args={[0.5, 0.74, 0.28, 10]} />
+          <meshStandardMaterial color={scene.foliage} roughness={0.9} />
+        </mesh>
+        <sprite position={[0, 0.03, 0.84]} scale={[1.8, 1.8, 1]}>
+          <spriteMaterial map={targetTexture} transparent depthWrite={false} />
+        </sprite>
+      </group>
+      <Rainfall enabled={isWetWeather} />
+    </group>
+  );
+});
+
 function PokedexModel({
   animatedSpriteUrl,
   concealed,
   flavorText,
+  revealAmount,
   onDPadStep,
   spriteUrl,
   typeNames,
@@ -611,6 +1380,7 @@ function PokedexModel({
   animatedSpriteUrl: string | null;
   concealed: boolean;
   flavorText: string | null;
+  revealAmount: number;
   onDPadStep: (delta: -1 | 1) => void;
   spriteUrl: string | null;
   typeNames: string[];
@@ -621,11 +1391,17 @@ function PokedexModel({
   return (
     <group rotation={[0, -0.22, 0]} scale={2.55}>
       <primitive object={scene} />
-      <primitive object={handScene} />
+      <primitive
+        object={handScene}
+        position={[-2.75, -0.12, 2.4]}
+        rotation={[0, -0.18, 0]}
+        scale={1.7}
+      />
       <PokedexScreen
         animatedSpriteUrl={animatedSpriteUrl}
         concealed={concealed}
         flavorText={flavorText}
+        revealAmount={revealAmount}
         spriteUrl={spriteUrl}
         typeNames={typeNames}
       />
@@ -866,10 +1642,16 @@ function PokemonScanner({ onScan }: { onScan: (query: string) => void }) {
 
 function App() {
   const initialMode = getSavedAppMode();
+  const [selectedGenerations, setSelectedGenerations] = useState<number[]>(
+    getSavedGameGenerations,
+  );
   const [mode, setMode] = useState<AppMode>(initialMode);
   const [query, setQuery] = useState(INITIAL_QUERY);
+  const [initialGamePokemonId] = useState<number | null>(() =>
+    initialMode === "game" ? getRandomGamePokemonId(getSavedGameGenerations()) : null,
+  );
   const [submittedQuery, setSubmittedQuery] = useState(
-    initialMode === "game" ? String(getRandomGamePokemonId()) : INITIAL_QUERY,
+    initialGamePokemonId ? String(initialGamePokemonId) : INITIAL_QUERY,
   );
   const [guess, setGuess] = useState("");
   const [roundResult, setRoundResult] = useState<RoundResult>("guessing");
@@ -878,8 +1660,29 @@ function App() {
     streak: 0,
     correctAnswers: 0,
   });
+  const [capturedPokemonIds, setCapturedPokemonIds] = useState<Set<number>>(
+    getSavedCapturedPokemonIds,
+  );
+  const [isCollectionOpen, setIsCollectionOpen] = useState(false);
   const [nextRoundSeconds, setNextRoundSeconds] = useState<number | null>(null);
+  const [roundSecondsRemaining, setRoundSecondsRemaining] = useState(
+    ROUND_TIME_LIMIT_SECONDS,
+  );
+  const [isIntroComplete, setIsIntroComplete] = useState(false);
+  const [isHintVisible, setIsHintVisible] = useState(false);
+  const [isShinyRound, setIsShinyRound] = useState(
+    () => initialMode === "game" && Math.random() < SHINY_ROUND_CHANCE,
+  );
+  const [voiceStatus, setVoiceStatus] = useState<
+    "idle" | "listening" | "unsupported" | "error"
+  >("idle");
+  const [voiceMessage, setVoiceMessage] = useState("");
   const guessInputRef = useRef<HTMLInputElement>(null);
+  const guessRef = useRef("");
+  const recognitionRef = useRef<VoiceRecognition | null>(null);
+  const recentGamePokemonIdsRef = useRef<number[]>(
+    initialGamePokemonId ? [initialGamePokemonId] : [],
+  );
   const [pokemonState, setPokemonState] = useState<PokemonState>({
     status: "loading",
     pokemon: null,
@@ -887,9 +1690,43 @@ function App() {
     query: "",
   });
 
+  const startNewRound = useCallback((generationIds = selectedGenerations) => {
+    setGuess("");
+    guessRef.current = "";
+    setRoundResult("guessing");
+    setNextRoundSeconds(null);
+    setRoundSecondsRemaining(ROUND_TIME_LIMIT_SECONDS);
+    const nextPokemonId = getRandomGamePokemonId(
+      generationIds,
+      recentGamePokemonIdsRef.current,
+    );
+    recentGamePokemonIdsRef.current = rememberGamePokemonId(
+      recentGamePokemonIdsRef.current,
+      nextPokemonId,
+    );
+    setSubmittedQuery(String(nextPokemonId));
+    setIsIntroComplete(false);
+    setIsHintVisible(false);
+    setIsShinyRound(Math.random() < SHINY_ROUND_CHANCE);
+  }, [selectedGenerations]);
+
   useEffect(() => {
     window.localStorage.setItem(APP_MODE_STORAGE_KEY, mode);
   }, [mode]);
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      GAME_GENERATIONS_STORAGE_KEY,
+      JSON.stringify(selectedGenerations),
+    );
+  }, [selectedGenerations]);
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      CAPTURED_POKEMON_STORAGE_KEY,
+      JSON.stringify([...capturedPokemonIds].sort((left, right) => left - right)),
+    );
+  }, [capturedPokemonIds]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -924,6 +1761,7 @@ function App() {
         const pokemon = (await response.json()) as Pokemon;
 
         let flavorText = FLAVOR_TEXT_FALLBACK;
+        let habitat = "rare";
 
         try {
           const speciesResponse = await fetch(pokemon.species.url, {
@@ -933,6 +1771,7 @@ function App() {
           if (speciesResponse.ok) {
             const species = (await speciesResponse.json()) as PokemonSpecies;
             flavorText = getEnglishFlavorText(species);
+            habitat = species.habitat?.name ?? "rare";
           }
         } catch (error) {
           if (error instanceof DOMException && error.name === "AbortError") {
@@ -944,6 +1783,7 @@ function App() {
           status: "ready",
           pokemon,
           flavorText,
+          habitat,
           error: "",
           query: normalizedQuery,
         });
@@ -979,6 +1819,10 @@ function App() {
       return;
     }
 
+    if (!isIntroComplete) {
+      return;
+    }
+
     const cryUrl = pokemonState.pokemon.cries.latest ?? pokemonState.pokemon.cries.legacy;
 
     if (!cryUrl) {
@@ -994,10 +1838,17 @@ function App() {
       cry.pause();
       cry.currentTime = 0;
     };
-  }, [mode, pokemonState, roundResult, submittedQuery]);
+  }, [isIntroComplete, mode, pokemonState, roundResult, submittedQuery]);
 
   const isGameRoundRevealed =
-    roundResult === "correct" || roundResult === "incorrect";
+    roundResult !== "guessing";
+  const introPlaybackKey =
+    mode === "game" &&
+    roundResult === "guessing" &&
+    pokemonState.status === "ready" &&
+    pokemonState.query === submittedQuery.trim().toLowerCase()
+      ? `${pokemonState.pokemon.id}:${pokemonState.query}`
+      : null;
 
   useEffect(() => {
     if (mode !== "game" || !isGameRoundRevealed) {
@@ -1015,9 +1866,9 @@ function App() {
     }, 1000);
     const timeout = window.setTimeout(() => {
       setGuess("");
-      setRoundResult("guessing");
-      setSubmittedQuery(String(getRandomGamePokemonId()));
+      guessRef.current = "";
       setNextRoundSeconds(null);
+      startNewRound();
     }, NEXT_ROUND_DELAY_SECONDS * 1_000);
 
     return () => {
@@ -1025,7 +1876,36 @@ function App() {
       window.clearTimeout(timeout);
       window.clearTimeout(kickoff);
     };
-  }, [isGameRoundRevealed, mode]);
+  }, [isGameRoundRevealed, mode, startNewRound]);
+
+  useEffect(() => {
+    if (
+      mode !== "game" ||
+      roundResult !== "guessing" ||
+      pokemonState.status !== "ready" ||
+      pokemonState.query !== submittedQuery.trim().toLowerCase()
+    ) {
+      return;
+    }
+
+    if (!isIntroComplete) {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      setRoundSecondsRemaining((seconds) => Math.max(0, seconds - 1));
+    }, 1_000);
+    const timeout = window.setTimeout(() => {
+      setRoundSecondsRemaining(0);
+      setRoundResult("timed-out");
+      setGameStats((currentStats) => ({ ...currentStats, streak: 0 }));
+    }, ROUND_TIME_LIMIT_SECONDS * 1_000);
+
+    return () => {
+      window.clearInterval(interval);
+      window.clearTimeout(timeout);
+    };
+  }, [isIntroComplete, mode, pokemonState, roundResult, submittedQuery]);
 
   useEffect(() => {
     if (
@@ -1037,21 +1917,38 @@ function App() {
     }
   }, [mode, pokemonState, roundResult]);
 
+  useEffect(() => {
+    return () => {
+      recognitionRef.current?.abort();
+      recognitionRef.current = null;
+    };
+  }, []);
+
   const spriteUrl =
     pokemonState.status === "ready"
-      ? getSpriteUrl(pokemonState.pokemon.id)
+      ? isShinyRound
+        ? getShinySpriteUrl(pokemonState.pokemon.id)
+        : getSpriteUrl(pokemonState.pokemon.id)
       : null;
   const animatedSpriteUrl =
     pokemonState.status === "ready"
-      ? getAnimatedSpriteUrl(pokemonState.pokemon.id)
+      ? isShinyRound
+        ? getAnimatedShinySpriteUrl(pokemonState.pokemon.id)
+        : getAnimatedSpriteUrl(pokemonState.pokemon.id)
       : null;
-  const typeNames =
-    pokemonState.status === "ready"
-      ? pokemonState.pokemon.types
-          .slice()
-          .sort((left, right) => left.slot - right.slot)
-          .map((pokemonType) => pokemonType.type.name)
-      : ["normal"];
+  const typeNames = useMemo(
+    () =>
+      pokemonState.status === "ready"
+        ? pokemonState.pokemon.types
+            .slice()
+            .sort((left, right) => left.slot - right.slot)
+            .map((pokemonType) => pokemonType.type.name)
+        : ["normal"],
+    [pokemonState],
+  );
+  const habitat =
+    pokemonState.status === "ready" ? pokemonState.habitat : "rare";
+  const isEvening = isEveningLocally();
   const flavorText =
     pokemonState.status === "ready" &&
     (mode === "lookup" || isGameRoundRevealed)
@@ -1065,11 +1962,6 @@ function App() {
       : pokemonState.status === "loading"
         ? "Loading Pokemon"
         : "No Pokemon loaded";
-  const startNewRound = () => {
-    setGuess("");
-    setRoundResult("guessing");
-    setSubmittedQuery(String(getRandomGamePokemonId()));
-  };
   const switchMode = (nextMode: AppMode) => {
     setMode(nextMode);
 
@@ -1080,29 +1972,121 @@ function App() {
 
     setSubmittedQuery(query);
   };
-  const submitGuess = () => {
-    if (pokemonState.status !== "ready" || !guess.trim()) {
+  const toggleGeneration = (generationId: number) => {
+    const isSelected = selectedGenerations.includes(generationId);
+
+    if (isSelected && selectedGenerations.length === 1) {
+      return;
+    }
+
+    const nextGenerations = isSelected
+      ? selectedGenerations.filter((selectedId) => selectedId !== generationId)
+      : [...selectedGenerations, generationId].sort((left, right) => left - right);
+
+    setSelectedGenerations(nextGenerations);
+  };
+  const submitGuess = (submittedGuess = guessRef.current) => {
+    if (pokemonState.status !== "ready" || !submittedGuess.trim()) {
       return;
     }
 
     const isCorrect =
-      normalizePokemonName(guess) ===
+      normalizePokemonName(submittedGuess) ===
       normalizePokemonName(pokemonState.pokemon.name);
 
     setRoundResult(isCorrect ? "correct" : "incorrect");
+    if (isCorrect) {
+      playCorrectJingle();
+      setCapturedPokemonIds((currentCaptures) => {
+        if (currentCaptures.has(pokemonState.pokemon.id)) {
+          return currentCaptures;
+        }
+
+        const nextCaptures = new Set(currentCaptures);
+        nextCaptures.add(pokemonState.pokemon.id);
+        return nextCaptures;
+      });
+    } else {
+      playIncorrectBuzz();
+    }
     setGameStats((currentStats) => {
       if (!isCorrect) {
         return { ...currentStats, streak: 0 };
       }
 
       const nextStreak = currentStats.streak + 1;
+      const roundPoints = Math.ceil(
+        (MAX_ROUND_POINTS * roundSecondsRemaining) / ROUND_TIME_LIMIT_SECONDS,
+      ) * (isShinyRound ? 2 : 1);
 
       return {
-        score: currentStats.score + 100 * nextStreak,
+        score: currentStats.score + roundPoints * nextStreak,
         streak: nextStreak,
         correctAnswers: currentStats.correctAnswers + 1,
       };
     });
+  };
+  const startVoiceGuess = () => {
+    const Recognition = window.SpeechRecognition ?? window.webkitSpeechRecognition;
+
+    if (!Recognition) {
+      setVoiceStatus("unsupported");
+      setVoiceMessage("Voice guesses are not supported in this browser.");
+      return;
+    }
+
+    recognitionRef.current?.abort();
+    const recognition = new Recognition();
+    recognitionRef.current = recognition;
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+    // English Pokemon names are recognized most reliably with an English model.
+    recognition.lang = "en-US";
+    recognition.onresult = (event) => {
+      const result = event.results[event.resultIndex];
+      const transcript = result?.[0]?.transcript.trim() ?? "";
+
+      if (!transcript) {
+        return;
+      }
+
+      setGuess(transcript);
+      guessRef.current = transcript;
+
+      if (result.isFinal) {
+        setVoiceStatus("idle");
+        setVoiceMessage(`Heard “${transcript}”. Sending guess…`);
+        recognition.stop();
+        submitGuess(transcript);
+      }
+    };
+    recognition.onerror = (event) => {
+      recognitionRef.current = null;
+      setVoiceStatus(event.error === "not-allowed" ? "error" : "idle");
+      setVoiceMessage(
+        event.error === "not-allowed"
+          ? "Microphone permission was not granted."
+          : "Could not hear a guess. Try again.",
+      );
+    };
+    recognition.onend = () => {
+      if (recognitionRef.current === recognition) {
+        recognitionRef.current = null;
+      }
+      setVoiceStatus((currentStatus) =>
+        currentStatus === "listening" ? "idle" : currentStatus,
+      );
+    };
+
+    try {
+      recognition.start();
+      setVoiceStatus("listening");
+      setVoiceMessage("Listening for a Pokemon name…");
+    } catch {
+      setVoiceStatus("error");
+      setVoiceMessage("Voice guessing could not start. Try again.");
+    }
   };
   const loadPokemonByOffset = (delta: -1 | 1) => {
     const fallbackId = Number.parseInt(submittedQuery, 10);
@@ -1121,22 +2105,68 @@ function App() {
     setQuery(scannedQuery);
     setSubmittedQuery(scannedQuery);
   }, []);
+  const selectedPokemonIds = useMemo(
+    () => getPokemonIdsForGenerations(selectedGenerations),
+    [selectedGenerations],
+  );
+  const capturedPokemonCount = capturedPokemonIds.size;
+  const selectedCapturedPokemonCount = selectedPokemonIds.filter((pokemonId) =>
+    capturedPokemonIds.has(pokemonId),
+  ).length;
+  const capturedPokemonPercentage =
+    (selectedCapturedPokemonCount / selectedPokemonIds.length) * 100;
+  const selectedGenerationLabel = GAME_GENERATIONS.filter((generation) =>
+    selectedGenerations.includes(generation.id),
+  )
+    .map((generation) => generation.label)
+    .join(" + ");
+  const timedRevealAmount =
+    mode === "game" &&
+    roundResult === "guessing" &&
+    isIntroComplete
+      ? (ROUND_TIME_LIMIT_SECONDS - roundSecondsRemaining) /
+        ROUND_TIME_LIMIT_SECONDS
+      : 0;
+  const silhouetteRevealAmount = Math.max(
+    isHintVisible ? 0.1 : 0,
+    timedRevealAmount,
+  );
 
   return (
-    <main className="pokedex-app">
+    <>
+      <WhosThatPokemonIntro
+        onComplete={() => setIsIntroComplete(true)}
+        playbackKey={introPlaybackKey}
+      />
+      <main className="pokedex-app">
       <section className="viewer-shell" aria-label="Interactive Pokedex model">
-        <Canvas camera={{ position: [8.6, 2, 4.1], fov: 60 }}>
-          <color attach="background" args={["#e8f6f0"]} />
-          <ambientLight intensity={1.1} />
-          <directionalLight position={[4, 4, 3]} intensity={2.4} />
-          <directionalLight position={[-3, 2, -4]} intensity={0.9} />
+        <Canvas shadows camera={{ position: [8.6, 2, 4.1], fov: 60 }}>
+          <color attach="background" args={[isEvening ? "#2a3150" : "#8fc8ec"]} />
+          <ambientLight intensity={isEvening ? 0.75 : 1.35} />
+          <directionalLight
+            castShadow
+            color={isEvening ? "#efab72" : "#ffffff"}
+            position={isEvening ? [-5, 1, 3] : [4, 4, 3]}
+            intensity={isEvening ? 1.8 : 2.4}
+          />
+          <directionalLight
+            color={isEvening ? "#6f89d9" : "#ffffff"}
+            position={[-3, 2, -4]}
+            intensity={isEvening ? 0.65 : 0.9}
+          />
           <Suspense fallback={null}>
+            <ScanEnvironment
+              habitat={habitat}
+              isEvening={isEvening}
+              spriteUrl={spriteUrl}
+            />
             <PokedexModel
               animatedSpriteUrl={animatedSpriteUrl}
               concealed={mode === "game" && !isGameRoundRevealed}
               flavorText={flavorText}
+              revealAmount={silhouetteRevealAmount}
               onDPadStep={
-                mode === "lookup" ? loadPokemonByOffset : startNewRound
+                mode === "lookup" ? loadPokemonByOffset : () => startNewRound()
               }
               spriteUrl={spriteUrl}
               typeNames={typeNames}
@@ -1173,7 +2203,9 @@ function App() {
 
         <div>
           <p className="eyebrow">
-            {mode === "game" ? "Gen I + II guessing game" : "Three.js Pokedex POC"}
+            {mode === "game"
+              ? `${selectedGenerationLabel} guessing game`
+              : "Three.js Pokedex POC"}
           </p>
           <h1>{pokemonLabel}</h1>
           {pokemonState.status === "error" ? (
@@ -1185,10 +2217,16 @@ function App() {
                 className={`status game-result ${roundResult}`}
               >
                 {roundResult === "correct" && pokemonState.status === "ready"
-                  ? `Correct! It's ${formatPokemonName(pokemonState.pokemon.name)}.`
+                  ? `Correct! It's ${formatPokemonName(pokemonState.pokemon.name)}. +${Math.ceil(
+                      (MAX_ROUND_POINTS * roundSecondsRemaining) /
+                        ROUND_TIME_LIMIT_SECONDS,
+                    ) * (isShinyRound ? 2 : 1)}${isShinyRound ? " shiny bonus points!" : " points."}`
                   : roundResult === "incorrect" &&
                       pokemonState.status === "ready"
                     ? `Not quite. It's ${formatPokemonName(pokemonState.pokemon.name)}.`
+                    : roundResult === "timed-out" &&
+                        pokemonState.status === "ready"
+                      ? `Time's up! It was ${formatPokemonName(pokemonState.pokemon.name)}. No points this round.`
                     : "Listen to the cry, then name the Pokemon hiding on the Pokedex screen."}
                 {nextRoundSeconds !== null
                   ? ` Next round in ${nextRoundSeconds}s.`
@@ -1207,7 +2245,74 @@ function App() {
                   <dt>Correct</dt>
                   <dd>{gameStats.correctAnswers}</dd>
                 </div>
+                <div>
+                  <dt>Time</dt>
+                  <dd>{isGameRoundRevealed ? "—" : `${roundSecondsRemaining}s`}</dd>
+                </div>
               </dl>
+              <fieldset className="generation-picker">
+                <legend>Generations — applies next round</legend>
+                <div className="generation-picker-options">
+                  {GAME_GENERATIONS.map((generation) => {
+                    const isSelected = selectedGenerations.includes(generation.id);
+                    const isOnlySelection =
+                      isSelected && selectedGenerations.length === 1;
+
+                    return (
+                      <button
+                        aria-pressed={isSelected}
+                        disabled={isOnlySelection}
+                        key={generation.id}
+                        onClick={() => toggleGeneration(generation.id)}
+                        type="button"
+                      >
+                        {generation.label.replace("Gen ", "")}
+                      </button>
+                    );
+                  })}
+                </div>
+              </fieldset>
+              <div className="game-utilities">
+                <button
+                  aria-haspopup="dialog"
+                  aria-label={`Open captured Pokemon collection. ${selectedCapturedPokemonCount} of ${selectedPokemonIds.length} selected Pokemon caught, ${capturedPokemonCount} caught overall.`}
+                  className="capture-progress"
+                  onClick={() => setIsCollectionOpen(true)}
+                  type="button"
+                >
+                  <div className="capture-progress-heading">
+                    <span>Pokédex captured</span>
+                    <strong>
+                      {selectedCapturedPokemonCount} / {selectedPokemonIds.length}
+                    </strong>
+                  </div>
+                  <div
+                    aria-valuemax={selectedPokemonIds.length}
+                    aria-valuemin={0}
+                    aria-valuenow={selectedCapturedPokemonCount}
+                    aria-valuetext={`${selectedCapturedPokemonCount} of ${selectedPokemonIds.length} selected Pokemon captured; ${capturedPokemonCount} total Pokemon captured`}
+                    className="capture-progress-track"
+                    role="progressbar"
+                  >
+                    <span
+                      className="capture-progress-fill"
+                      style={{ width: `${capturedPokemonPercentage}%` }}
+                    />
+                  </div>
+                </button>
+                <button
+                  className="hint-button"
+                  disabled={
+                    pokemonState.status !== "ready" ||
+                    isGameRoundRevealed ||
+                    isHintVisible
+                  }
+                  onClick={() => setIsHintVisible(true)}
+                  type="button"
+                >
+                  {isHintVisible ? "Hint used" : "Hint: reveal 10%"}
+                </button>
+              </div>
             </>
           ) : (
             <p className="status">
@@ -1254,8 +2359,8 @@ function App() {
               submitGuess();
             }}
           >
-            <label htmlFor="pokemon-guess">Your guess</label>
-            <div className="lookup-row">
+              <label htmlFor="pokemon-guess">Your guess</label>
+              <div className="lookup-row">
               <input
                 autoComplete="off"
                 disabled={
@@ -1263,7 +2368,11 @@ function App() {
                 }
                 id="pokemon-guess"
                 name="guess"
-                onChange={(event) => setGuess(event.target.value)}
+                onChange={(event) => {
+                  const nextGuess = event.target.value;
+                  setGuess(nextGuess);
+                  guessRef.current = nextGuess;
+                }}
                 placeholder="Who's that Pokemon?"
                 ref={guessInputRef}
                 spellCheck="false"
@@ -1281,10 +2390,33 @@ function App() {
                   : "Guess"}
               </button>
             </div>
+            <div className="voice-guess-controls">
+              <button
+                aria-pressed={voiceStatus === "listening"}
+                className="voice-guess-button"
+                disabled={
+                  pokemonState.status !== "ready" || isGameRoundRevealed
+                }
+                onClick={startVoiceGuess}
+                type="button"
+              >
+                {voiceStatus === "listening" ? "Listening…" : "Listen"}
+              </button>
+              <span aria-live="polite" className="voice-guess-status">
+                {voiceMessage || "Say a Pokemon name to fill and send your guess."}
+              </span>
+            </div>
           </form>
         )}
       </section>
-    </main>
+      </main>
+      {isCollectionOpen ? (
+        <CapturedPokemonCollection
+          capturedPokemonIds={capturedPokemonIds}
+          onClose={() => setIsCollectionOpen(false)}
+        />
+      ) : null}
+    </>
   );
 }
 
