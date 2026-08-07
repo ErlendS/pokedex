@@ -21,6 +21,10 @@ import "./App.css";
 type Pokemon = {
   id: number;
   name: string;
+  types: Array<{
+    slot: number;
+    type: { name: string };
+  }>;
   cries: {
     latest: string | null;
     legacy: string | null;
@@ -92,6 +96,26 @@ const SPRITE_HTML_SCALE = 0.15;
 const SPRITE_BASE_URL =
   "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon";
 const POKEMON_SCAN_VALUE = /^(?:pokemon:)?([a-z0-9][a-z0-9-]{0,39})$/i;
+const TYPE_SCREEN_COLORS: Record<string, [string, string, string]> = {
+  bug: ["#dce96f", "#789b20", "#193d20"],
+  dark: ["#a18b93", "#4d3f52", "#171925"],
+  dragon: ["#b39cff", "#5c4bb0", "#211d5a"],
+  electric: ["#fff3a1", "#e0a714", "#6d4810"],
+  fairy: ["#ffd0e8", "#dd6ea9", "#6e285c"],
+  fighting: ["#ffb193", "#c95239", "#5c2025"],
+  fire: ["#ffd391", "#e56728", "#6d2419"],
+  flying: ["#c5e6ff", "#639bd0", "#234d7a"],
+  ghost: ["#c5b8f6", "#67589e", "#2d2255"],
+  grass: ["#c9f49d", "#5faa55", "#194d35"],
+  ground: ["#f1d19a", "#af7846", "#55352a"],
+  ice: ["#c6f5f1", "#55bfc1", "#1e5a6a"],
+  normal: ["#eee6cf", "#a89573", "#514633"],
+  poison: ["#ebbcf0", "#9a4baf", "#49215c"],
+  psychic: ["#ffbad1", "#d65f8b", "#6d204b"],
+  rock: ["#e4d3a0", "#9a8149", "#493b25"],
+  steel: ["#d9e6ef", "#7894a8", "#314b5d"],
+  water: ["#b8ecff", "#4299d5", "#174b7e"],
+};
 
 function getPokemonQueryFromScan(rawValue: string) {
   const value = rawValue.trim();
@@ -263,10 +287,10 @@ function createDPadSegmentShape() {
   return shape;
 }
 
-function createScreenGradientTexture() {
+function createScreenGradientTexture(typeNames: string[]) {
   const canvas = document.createElement("canvas");
-  canvas.width = 256;
-  canvas.height = 192;
+  canvas.width = 512;
+  canvas.height = 384;
 
   const context = canvas.getContext("2d");
 
@@ -274,13 +298,80 @@ function createScreenGradientTexture() {
     return null;
   }
 
-  const gradient = context.createLinearGradient(0, 0, 0, canvas.height);
-  gradient.addColorStop(0, "#d0fb9f");
-  gradient.addColorStop(0.48, "#6cd87e");
-  gradient.addColorStop(1, "#01351f");
+  const primary = TYPE_SCREEN_COLORS[typeNames[0]] ?? TYPE_SCREEN_COLORS.normal;
+  const secondary = TYPE_SCREEN_COLORS[typeNames[1] ?? typeNames[0]] ?? primary;
+  const isWater = typeNames.includes("water") || typeNames.includes("ice");
+  const isFire = typeNames.includes("fire");
+  const isGrass = typeNames.includes("grass") || typeNames.includes("bug");
+  const horizon = Math.round(canvas.height * 0.58);
 
-  context.fillStyle = gradient;
-  context.fillRect(0, 0, canvas.width, canvas.height);
+  const sky = context.createLinearGradient(0, 0, 0, horizon);
+  sky.addColorStop(0, primary[0]);
+  sky.addColorStop(1, secondary[0]);
+  context.fillStyle = sky;
+  context.fillRect(0, 0, canvas.width, horizon);
+
+  context.fillStyle = isWater ? "#237cb5" : isFire ? "#74302a" : primary[2];
+  context.fillRect(0, horizon, canvas.width, canvas.height - horizon);
+
+  context.globalAlpha = 0.72;
+  context.fillStyle = "#ffffff";
+  context.fillRect(58, 56, 86, 15);
+  context.fillRect(76, 42, 50, 15);
+  context.fillRect(326, 96, 112, 15);
+  context.fillRect(350, 81, 58, 15);
+  context.globalAlpha = 1;
+
+  if (isWater) {
+    context.strokeStyle = "#b8f4ff";
+    context.lineWidth = 6;
+    for (let y = horizon + 24; y < canvas.height; y += 34) {
+      context.beginPath();
+      context.moveTo(0, y);
+      context.lineTo(canvas.width, y - 8);
+      context.stroke();
+    }
+  } else if (isFire) {
+    context.fillStyle = "#3f2024";
+    context.beginPath();
+    context.moveTo(0, horizon + 26);
+    context.lineTo(105, horizon - 58);
+    context.lineTo(202, horizon + 24);
+    context.lineTo(326, horizon - 86);
+    context.lineTo(canvas.width, horizon + 22);
+    context.closePath();
+    context.fill();
+    context.fillStyle = "#ffb12b";
+    for (let x = 28; x < canvas.width; x += 92) {
+      context.fillRect(x, canvas.height - 26, 44, 8);
+    }
+  } else {
+    context.fillStyle = isGrass ? "#488f3f" : primary[1];
+    context.fillRect(0, horizon, canvas.width, 28);
+    context.fillStyle = isGrass ? "#236b32" : primary[2];
+    context.fillRect(0, horizon + 28, canvas.width, canvas.height - horizon - 28);
+
+    if (isGrass) {
+      const tree = (x: number, y: number, size: number) => {
+        context.fillStyle = "#5b3a26";
+        context.fillRect(x + size * 0.43, y + size * 0.56, size * 0.16, size * 0.44);
+        context.fillStyle = "#1c5830";
+        context.fillRect(x + size * 0.12, y + size * 0.3, size * 0.76, size * 0.28);
+        context.fillRect(x + size * 0.24, y + size * 0.12, size * 0.52, size * 0.26);
+        context.fillStyle = "#3c9a45";
+        context.fillRect(x + size * 0.28, y, size * 0.38, size * 0.22);
+      };
+      tree(22, horizon - 95, 78);
+      tree(398, horizon - 112, 96);
+    }
+  }
+
+  context.globalAlpha = 0.2;
+  context.fillStyle = "#ffffff";
+  for (let x = 0; x < canvas.width; x += 16) {
+    context.fillRect(x, canvas.height - ((x * 7) % 56) - 12, 5, 12);
+  }
+  context.globalAlpha = 1;
 
   const texture = new CanvasTexture(canvas);
   texture.colorSpace = SRGBColorSpace;
@@ -291,8 +382,11 @@ function createScreenGradientTexture() {
   return texture;
 }
 
-function ScreenBackground() {
-  const gradientTexture = useMemo(() => createScreenGradientTexture(), []);
+function ScreenBackground({ typeNames }: { typeNames: string[] }) {
+  const gradientTexture = useMemo(
+    () => createScreenGradientTexture(typeNames),
+    [typeNames],
+  );
 
   useEffect(() => {
     return () => {
@@ -373,14 +467,16 @@ function PokedexScreen({
   concealed,
   flavorText,
   spriteUrl,
+  typeNames,
 }: {
   concealed: boolean;
   flavorText: string | null;
   spriteUrl: string | null;
+  typeNames: string[];
 }) {
   return (
     <group position={POKEDEX_SCREEN_POSITION} rotation={[0, Math.PI / 2, 0]}>
-      <ScreenBackground />
+      <ScreenBackground typeNames={typeNames} />
       {spriteUrl ? (
         <PokemonSprite
           concealed={concealed}
@@ -395,6 +491,7 @@ function PokedexScreen({
 
 function DPadControls({ onStep }: { onStep: (delta: -1 | 1) => void }) {
   const dPadSegmentShape = useMemo(() => createDPadSegmentShape(), []);
+  const [pressedSegment, setPressedSegment] = useState<string | null>(null);
   const dPadSegments = [
     {
       name: "left",
@@ -426,10 +523,12 @@ function DPadControls({ onStep }: { onStep: (delta: -1 | 1) => void }) {
       {dPadSegments.map((segment, index) => (
         <mesh
           key={segment.name}
-          position={[0, 0, index * 0.001]}
+          position={[0, 0, index * 0.001 - (pressedSegment === segment.name ? 0.018 : 0)]}
           rotation={[0, 0, segment.rotation]}
           onClick={(event) => {
             event.stopPropagation();
+            setPressedSegment(segment.name);
+            window.setTimeout(() => setPressedSegment(null), 120);
             onStep(segment.delta);
           }}
           onPointerDown={(event) => {
@@ -448,9 +547,21 @@ function DPadControls({ onStep }: { onStep: (delta: -1 | 1) => void }) {
         >
           <shapeGeometry args={[dPadSegmentShape]} />
           <meshBasicMaterial
-            color={SHOW_D_PAD_DEBUG_OVERLAY ? "#00d1ff" : "#ffffff"}
+            color={
+              SHOW_D_PAD_DEBUG_OVERLAY
+                ? "#00d1ff"
+                : pressedSegment === segment.name
+                  ? "#501a19"
+                  : "#ffffff"
+            }
             depthWrite={false}
-            opacity={SHOW_D_PAD_DEBUG_OVERLAY ? 0.38 : 0}
+            opacity={
+              SHOW_D_PAD_DEBUG_OVERLAY
+                ? 0.38
+                : pressedSegment === segment.name
+                  ? 0.58
+                  : 0.12
+            }
             side={DoubleSide}
             transparent
           />
@@ -471,11 +582,13 @@ function PokedexModel({
   flavorText,
   onDPadStep,
   spriteUrl,
+  typeNames,
 }: {
   concealed: boolean;
   flavorText: string | null;
   onDPadStep: (delta: -1 | 1) => void;
   spriteUrl: string | null;
+  typeNames: string[];
 }) {
   const { scene } = useGLTF("/Pokedex.glb");
 
@@ -486,6 +599,7 @@ function PokedexModel({
         concealed={concealed}
         flavorText={flavorText}
         spriteUrl={spriteUrl}
+        typeNames={typeNames}
       />
       <DPadControls onStep={onDPadStep} />
     </group>
@@ -843,6 +957,13 @@ function App() {
     pokemonState.status === "ready"
       ? getSpriteUrl(pokemonState.pokemon.id)
       : null;
+  const typeNames =
+    pokemonState.status === "ready"
+      ? pokemonState.pokemon.types
+          .slice()
+          .sort((left, right) => left.slot - right.slot)
+          .map((pokemonType) => pokemonType.type.name)
+      : ["normal"];
   const isGameRoundRevealed =
     roundResult === "correct" || roundResult === "incorrect";
   const flavorText =
@@ -919,6 +1040,7 @@ function App() {
                 mode === "lookup" ? loadPokemonByOffset : startNewRound
               }
               spriteUrl={spriteUrl}
+              typeNames={typeNames}
             />
           </Suspense>
           <OrbitControls
