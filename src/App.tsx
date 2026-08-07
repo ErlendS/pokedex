@@ -12,6 +12,14 @@ import {
 } from "react";
 import type { CSSProperties } from "react";
 import {
+  LEGENDARY_SKIN_COST,
+  POKEDEX_SKIN_BY_ID,
+  POKEDEX_SKINS,
+  SKIN_PURCHASE_COSTS,
+  type PokedexSkin,
+  type PokedexSkinId,
+} from "./skins";
+import {
   BufferGeometry,
   CanvasTexture,
   DoubleSide,
@@ -246,7 +254,6 @@ const CONFETTI_MAX_LEVEL = 1_000;
 const CONFETTI_DURATION_SECONDS = 5;
 const NAME_REVEAL_UPGRADE_COST = 150;
 const NAME_REVEAL_MAX_LEVEL = 10;
-const LEGENDARY_SKIN_COST = 1_000;
 const UNCAUGHT_RADAR_COST = 1_000;
 const SHINY_ROUND_CHANCE = 0.2;
 const APP_MODE_STORAGE_KEY = "pokedex:mode";
@@ -260,73 +267,8 @@ const NAME_REVEAL_UPGRADE_STORAGE_KEY = "pokedex:name-reveal-upgrade";
 const COMPLETED_ROUNDS_STORAGE_KEY = "pokedex:completed-rounds";
 const POKEDEX_SKINS_STORAGE_KEY = "pokedex:owned-skins";
 const POKEDEX_EQUIPPED_SKIN_STORAGE_KEY = "pokedex:equipped-skin";
-const HAND_TONE_STORAGE_KEY = "pokedex:hand-tone";
 const UNCAUGHT_RADAR_STORAGE_KEY = "pokedex:uncaught-radar";
 const INTRO_MUTED_STORAGE_KEY = "pokedex:intro-muted";
-type SkinRarity = "Common" | "Rare" | "Unique" | "Legendary";
-type PokedexSkinId = string;
-type PokedexSkin = {
-  id: PokedexSkinId;
-  label: string;
-  rarity: SkinRarity;
-  weight: number;
-  hue: number;
-  saturation: number;
-  lightness: number;
-  metalness: number;
-  roughness: number;
-  legendaryEffect?: "Flame" | "Flower";
-};
-
-const HAND_TONES = [
-  { id: "fair", label: "Fair", color: "#f2c9ad" },
-  { id: "light", label: "Light", color: "#d9a784" },
-  { id: "medium", label: "Medium", color: "#b97852" },
-  { id: "deep", label: "Deep", color: "#7b442b" },
-  { id: "dark", label: "Dark", color: "#4b271e" },
-] as const;
-type HandToneId = (typeof HAND_TONES)[number]["id"];
-
-const SKIN_RARITY: Record<SkinRarity, { weight: number; metalness: number; roughness: number }> = {
-  Common: { weight: 55, metalness: 0.1, roughness: 0.44 },
-  Rare: { weight: 25, metalness: 0.28, roughness: 0.3 },
-  Unique: { weight: 8, metalness: 0.5, roughness: 0.22 },
-  Legendary: { weight: 2, metalness: 0.78, roughness: 0.16 },
-};
-const SKIN_PURCHASE_COSTS: Record<SkinRarity, number> = {
-  Common: 250,
-  Rare: 500,
-  Unique: 750,
-  Legendary: LEGENDARY_SKIN_COST,
-};
-
-// A data-driven catalogue keeps skin rewards scalable without creating 200 bespoke UI paths.
-const SKIN_THEMES: Array<{ name: string; hue: number; saturation: number; lightness: number }> = [
-  { name: "Crimson", hue: 358, saturation: 92, lightness: 38 }, { name: "Cobalt", hue: 216, saturation: 80, lightness: 38 },
-  { name: "Verdant", hue: 132, saturation: 67, lightness: 30 }, { name: "Solar", hue: 43, saturation: 92, lightness: 43 },
-  { name: "Violet", hue: 271, saturation: 76, lightness: 42 }, { name: "Coral", hue: 11, saturation: 86, lightness: 48 },
-  { name: "Arctic", hue: 195, saturation: 80, lightness: 54 }, { name: "Obsidian", hue: 230, saturation: 28, lightness: 16 },
-  { name: "Flower", hue: 329, saturation: 76, lightness: 50 }, { name: "Lightning", hue: 52, saturation: 96, lightness: 46 },
-  { name: "Flame", hue: 12, saturation: 94, lightness: 45 }, { name: "Ultraviolet", hue: 290, saturation: 88, lightness: 43 },
-];
-const SKIN_FORMS = ["Scout", "Ranger", "Circuit", "Aurora", "Comet", "Bloom", "Tide", "Ember", "Prism", "Phantom", "Relic", "Crown", "Nova", "Cipher", "Voyager", "Pulse", "Meteor"];
-const SKIN_RARITIES: SkinRarity[] = ["Common", "Common", "Common", "Common", "Rare", "Rare", "Rare", "Unique", "Unique", "Legendary"];
-const POKEDEX_SKINS: PokedexSkin[] = Array.from({ length: 204 }, (_, index) => {
-  const theme = SKIN_THEMES[index % SKIN_THEMES.length];
-  const form = SKIN_FORMS[Math.floor(index / SKIN_THEMES.length) % SKIN_FORMS.length];
-  const rarity = SKIN_RARITIES[index % SKIN_RARITIES.length];
-  const traits = SKIN_RARITY[rarity];
-  const legendaryEffect = rarity === "Legendary" ? (Math.floor(index / SKIN_RARITIES.length) % 2 === 0 ? "Flame" : "Flower") : undefined;
-  const label = index === 0
-    ? "Classic Red"
-    : index === 1
-      ? "Midnight"
-      : legendaryEffect
-        ? `${legendaryEffect} Legendary ${form}`
-        : `${theme.name} ${form}`;
-  return { id: index === 0 ? "classic" : index === 1 ? "midnight" : `skin-${index + 1}`, label, rarity, weight: traits.weight, hue: theme.hue, saturation: theme.saturation, lightness: Math.min(70, theme.lightness + (Math.floor(index / SKIN_THEMES.length) % 3) * 5), metalness: traits.metalness, roughness: traits.roughness, legendaryEffect };
-});
-const POKEDEX_SKIN_BY_ID = new Map(POKEDEX_SKINS.map((skin) => [skin.id, skin]));
 const WHOSE_THAT_POKEMON_VIDEO_ID = "EE-xtCF3T94";
 const WHOSE_THAT_POKEMON_INTRO_SECONDS = 5;
 const WHOSE_THAT_POKEMON_FALLBACK_MS =
@@ -2482,35 +2424,41 @@ function ScanTargetSprite({
 }
 
 function LegendarySkinDecal({ skin }: { skin: PokedexSkin }) {
-  if (skin.rarity !== "Legendary") return null;
+  const trailRef = useRef<Group>(null);
   const isFlame = skin.legendaryEffect === "Flame";
 
+  useFrame(({ clock }) => {
+    if (!trailRef.current) return;
+    const progress = (clock.getElapsedTime() * (isFlame ? 0.42 : 0.28)) % 1;
+    trailRef.current.position.y = -0.19 + progress * 0.38;
+    trailRef.current.rotation.z = isFlame ? Math.sin(clock.getElapsedTime() * 4) * 0.14 : clock.getElapsedTime() * 0.8;
+  });
+
+  if (skin.rarity !== "Legendary") return null;
+
   return (
-    <Html
-      center
-      position={[0.56, 0.48, 0.014]}
-      scale={0.1}
-      style={{ pointerEvents: "none" }}
-      transform
-    >
+    <group ref={trailRef} position={[0.19, -0.19, 0.018]}>
       {isFlame ? (
-        <svg aria-hidden="true" height="180" viewBox="0 0 180 180" width="180">
-          <g fill="none" stroke="#ffd34d" strokeLinecap="round" strokeWidth="9">
-            <path d="M31 154 C9 105 55 93 54 38 C94 66 112 84 94 122 C126 98 137 79 129 48 C180 100 159 158 111 164" />
-            <path d="M67 158 C48 129 80 112 82 78 C112 105 119 129 99 159" stroke="#ff6a32" />
-          </g>
-          <animateTransform attributeName="transform" dur="1.8s" repeatCount="indefinite" type="rotate" values="-2 90 90;2 90 90;-2 90 90" />
-        </svg>
+        <>
+          {[[-0.045, 0], [0, 0.04], [0.045, -0.01]].map(([x, y], index) => (
+            <mesh key={index} position={[x, y, 0]} scale={[0.045, 0.1 + index * 0.016, 1]}>
+              <coneGeometry args={[1, 1.8, 5]} />
+              <meshBasicMaterial color={index === 1 ? "#ffd34d" : "#ff652f"} toneMapped={false} transparent opacity={0.92} />
+            </mesh>
+          ))}
+        </>
       ) : (
-        <svg aria-hidden="true" height="180" viewBox="0 0 180 180" width="180">
-          <g fill="#ff87be" stroke="#fff1a6" strokeWidth="4" transform="translate(90 90)">
-            {Array.from({ length: 8 }, (_, index) => <ellipse key={index} rx="17" ry="43" transform={`rotate(${index * 45}) translate(0 -38)`} />)}
-            <circle fill="#ffcc40" r="22" />
-          </g>
-          <animateTransform attributeName="transform" dur="2.4s" repeatCount="indefinite" type="rotate" values="0 90 90;360 90 90" />
-        </svg>
+        <>
+          {Array.from({ length: 5 }, (_, index) => (
+            <mesh key={index} position={[Math.cos(index * (Math.PI * 2 / 5)) * 0.047, Math.sin(index * (Math.PI * 2 / 5)) * 0.047, 0]} scale={[0.028, 0.05, 1]} rotation={[0, 0, index * (Math.PI * 2 / 5)]}>
+              <sphereGeometry args={[1, 8, 6]} />
+              <meshBasicMaterial color="#ff82bb" toneMapped={false} />
+            </mesh>
+          ))}
+          <mesh scale={0.024}><sphereGeometry args={[1, 8, 6]} /><meshBasicMaterial color="#ffd34d" toneMapped={false} /></mesh>
+        </>
       )}
-    </Html>
+    </group>
   );
 }
 
@@ -2521,7 +2469,6 @@ function PokedexModel({
   revealAmount,
   skin,
   showShinyIndicator,
-  handTone,
   onDPadStep,
   spriteUrl,
   typeNames,
@@ -2532,13 +2479,11 @@ function PokedexModel({
   revealAmount: number;
   skin: PokedexSkinId;
   showShinyIndicator: boolean;
-  handTone: HandToneId;
   onDPadStep: (delta: -1 | 1) => void;
   spriteUrl: string | null;
   typeNames: string[];
 }) {
   const { scene } = useGLTF("/Pokedex.glb");
-  const { scene: handScene } = useGLTF("/PokedexHand.glb");
   const skinnedScene = useMemo(() => {
     const clone = scene.clone(true);
     clone.traverse((object) => {
@@ -2550,17 +2495,6 @@ function PokedexModel({
     });
     return clone;
   }, [scene]);
-  const skinnedHand = useMemo(() => {
-    const clone = handScene.clone(true);
-    clone.traverse((object) => {
-      if (object instanceof Mesh) {
-        object.material = Array.isArray(object.material)
-          ? object.material.map((material) => material.clone())
-          : object.material.clone();
-      }
-    });
-    return clone;
-  }, [handScene]);
   const legendaryFinishMaterialsRef = useRef<MeshStandardMaterial[]>([]);
   const selectedSkin = useMemo(
     () => POKEDEX_SKIN_BY_ID.get(skin) ?? POKEDEX_SKIN_BY_ID.get("classic")!,
@@ -2636,26 +2570,7 @@ function PokedexModel({
     });
   });
 
-  useEffect(() => {
-    const selectedTone = HAND_TONES.find((tone) => tone.id === handTone) ?? HAND_TONES[2];
-    skinnedHand.traverse((object) => {
-      if (!(object instanceof Mesh)) return;
-      const materials = Array.isArray(object.material) ? object.material : [object.material];
-      materials.forEach((material) => {
-        if (material instanceof MeshStandardMaterial) {
-          material.color.set(selectedTone.color);
-          material.roughness = 0.72;
-          material.metalness = 0;
-          material.depthTest = true;
-          material.depthWrite = true;
-          material.needsUpdate = true;
-        }
-      });
-    });
-  }, [handTone, skinnedHand]);
-
   return (
-    <>
     <group
       position={POKEDEX_MODEL_POSITION}
       rotation={[0, POKEDEX_MODEL_ROTATION_Y, 0]}
@@ -2674,13 +2589,6 @@ function PokedexModel({
       />
       <DPadControls onStep={onDPadStep} />
     </group>
-    <primitive
-      object={skinnedHand}
-      position={[3.35, -1.72, -0.1]}
-      rotation={[0.12, 0.22, -Math.PI / 2]}
-      scale={[-0.8, 0.8, 0.8]}
-    />
-    </>
   );
 }
 
@@ -2811,7 +2719,6 @@ function WorldConfetti({
 }
 
 useGLTF.preload("/Pokedex.glb");
-useGLTF.preload("/PokedexHand.glb");
 
 function PokemonScanner({ onScan }: { onScan: (query: string) => void }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -3080,10 +2987,6 @@ function App() {
     () => getSavedOwnedSkins(),
   );
   const [equippedSkin, setEquippedSkin] = useState<PokedexSkinId>(() => (window.localStorage.getItem(POKEDEX_EQUIPPED_SKIN_STORAGE_KEY) as PokedexSkinId) || "classic");
-  const [handTone, setHandTone] = useState<HandToneId>(() => {
-    const savedTone = window.localStorage.getItem(HAND_TONE_STORAGE_KEY);
-    return HAND_TONES.some((tone) => tone.id === savedTone) ? savedTone as HandToneId : "medium";
-  });
   const [hasUncaughtRadar, setHasUncaughtRadar] = useState(() => window.localStorage.getItem(UNCAUGHT_RADAR_STORAGE_KEY) === "true");
   const [isIntroComplete, setIsIntroComplete] = useState(false);
   const [isHintVisible, setIsHintVisible] = useState(false);
@@ -3259,7 +3162,6 @@ function App() {
   }, [completedRounds]);
   useEffect(() => { window.localStorage.setItem(POKEDEX_SKINS_STORAGE_KEY, JSON.stringify([...ownedSkins])); }, [ownedSkins]);
   useEffect(() => { window.localStorage.setItem(POKEDEX_EQUIPPED_SKIN_STORAGE_KEY, equippedSkin); }, [equippedSkin]);
-  useEffect(() => { window.localStorage.setItem(HAND_TONE_STORAGE_KEY, handTone); }, [handTone]);
   useEffect(() => { window.localStorage.setItem(UNCAUGHT_RADAR_STORAGE_KEY, String(hasUncaughtRadar)); }, [hasUncaughtRadar]);
   useEffect(() => { window.localStorage.setItem(INTRO_MUTED_STORAGE_KEY, String(isIntroMuted)); }, [isIntroMuted]);
 
@@ -3981,7 +3883,6 @@ function App() {
               animatedSpriteUrl={animatedSpriteUrl}
               concealed={isCurrentGamePokemonConcealed}
               flavorText={flavorText}
-              handTone={handTone}
               revealAmount={silhouetteRevealAmount}
               skin={equippedSkin}
               showShinyIndicator={
@@ -4123,23 +4024,6 @@ function App() {
                     <span style={{ width: `${(ownedSkins.size / POKEDEX_SKINS.length) * 100}%` }} />
                   </div>
                   <p className="skin-shop-copy">Win correct rounds for weighted drops, or buy skins by rarity. Legendary skins cost {LEGENDARY_SKIN_COST} points.</p>
-                  <fieldset className="hand-tone-picker">
-                    <legend>Hand tone</legend>
-                    <div className="hand-tone-options">
-                      {HAND_TONES.map((tone) => (
-                        <button
-                          aria-label={`Use ${tone.label} hand tone`}
-                          aria-pressed={handTone === tone.id}
-                          key={tone.id}
-                          onClick={() => setHandTone(tone.id)}
-                          style={{ backgroundColor: tone.color }}
-                          type="button"
-                        >
-                          <span className="visually-hidden">{tone.label}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </fieldset>
                   <details className="skin-catalog">
                     <summary>Browse all {POKEDEX_SKINS.length} skins</summary>
                     <div className="skin-grid">
