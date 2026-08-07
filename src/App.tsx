@@ -100,6 +100,9 @@ const SPRITE_RENDER_SIZE = 96;
 const SPRITE_HTML_SCALE = 0.15;
 const SPRITE_BASE_URL =
   "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon";
+const ANIMATED_SPRITE_BASE_URL =
+  "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/versions/generation-v/black-white/animated";
+const NEXT_ROUND_DELAY_SECONDS = 3;
 const POKEMON_SCAN_VALUE = /^(?:pokemon:)?([a-z0-9][a-z0-9-]{0,39})$/i;
 const TYPE_SCREEN_COLORS: Record<string, [string, string, string]> = {
   bug: ["#dce96f", "#789b20", "#193d20"],
@@ -168,6 +171,10 @@ function getEnglishFlavorText(species: PokemonSpecies) {
 
 function getSpriteUrl(pokemonId: number) {
   return `${SPRITE_BASE_URL}/${pokemonId}.png`;
+}
+
+function getAnimatedSpriteUrl(pokemonId: number) {
+  return `${ANIMATED_SPRITE_BASE_URL}/${pokemonId}.gif`;
 }
 
 function getRandomKantoPokemonId() {
@@ -408,13 +415,16 @@ function ScreenBackground({ typeNames }: { typeNames: string[] }) {
 }
 
 function PokemonSprite({
+  animatedSpriteUrl,
   concealed,
   spriteUrl,
 }: {
+  animatedSpriteUrl: string;
   concealed: boolean;
   spriteUrl: string;
 }) {
   const [isLoaded, setIsLoaded] = useState(false);
+  const [displayUrl, setDisplayUrl] = useState(animatedSpriteUrl);
 
   return (
     <Html
@@ -431,7 +441,12 @@ function PokemonSprite({
         className={isLoaded ? "pokemon-sprite is-loaded" : "pokemon-sprite"}
         draggable={false}
         onLoad={() => setIsLoaded(true)}
-        src={spriteUrl}
+        onError={() => {
+          if (displayUrl !== spriteUrl) {
+            setDisplayUrl(spriteUrl);
+          }
+        }}
+        src={displayUrl}
         style={{
           display: "block",
           filter: concealed ? "brightness(0)" : "none",
@@ -474,11 +489,13 @@ function FlavorTextOverlay({ text }: { text: string }) {
 }
 
 function PokedexScreen({
+  animatedSpriteUrl,
   concealed,
   flavorText,
   spriteUrl,
   typeNames,
 }: {
+  animatedSpriteUrl: string | null;
   concealed: boolean;
   flavorText: string | null;
   spriteUrl: string | null;
@@ -489,6 +506,7 @@ function PokedexScreen({
       <ScreenBackground typeNames={typeNames} />
       {spriteUrl ? (
         <PokemonSprite
+          animatedSpriteUrl={animatedSpriteUrl ?? spriteUrl}
           concealed={concealed}
           key={spriteUrl}
           spriteUrl={spriteUrl}
@@ -576,12 +594,14 @@ function DPadControls({ onStep }: { onStep: (delta: -1 | 1) => void }) {
 }
 
 function PokedexModel({
+  animatedSpriteUrl,
   concealed,
   flavorText,
   onDPadStep,
   spriteUrl,
   typeNames,
 }: {
+  animatedSpriteUrl: string | null;
   concealed: boolean;
   flavorText: string | null;
   onDPadStep: (delta: -1 | 1) => void;
@@ -594,6 +614,7 @@ function PokedexModel({
     <group rotation={[0, -0.22, 0]} scale={2.55}>
       <primitive object={scene} />
       <PokedexScreen
+        animatedSpriteUrl={animatedSpriteUrl}
         concealed={concealed}
         flavorText={flavorText}
         spriteUrl={spriteUrl}
@@ -965,7 +986,10 @@ function App() {
       return;
     }
 
-    const kickoff = window.setTimeout(() => setNextRoundSeconds(10), 0);
+    const kickoff = window.setTimeout(
+      () => setNextRoundSeconds(NEXT_ROUND_DELAY_SECONDS),
+      0,
+    );
     const interval = window.setInterval(() => {
       setNextRoundSeconds((seconds) =>
         seconds === null || seconds <= 1 ? 1 : seconds - 1,
@@ -976,7 +1000,7 @@ function App() {
       setRoundResult("guessing");
       setSubmittedQuery(String(getRandomKantoPokemonId()));
       setNextRoundSeconds(null);
-    }, 10_000);
+    }, NEXT_ROUND_DELAY_SECONDS * 1_000);
 
     return () => {
       window.clearInterval(interval);
@@ -988,6 +1012,10 @@ function App() {
   const spriteUrl =
     pokemonState.status === "ready"
       ? getSpriteUrl(pokemonState.pokemon.id)
+      : null;
+  const animatedSpriteUrl =
+    pokemonState.status === "ready"
+      ? getAnimatedSpriteUrl(pokemonState.pokemon.id)
       : null;
   const typeNames =
     pokemonState.status === "ready"
@@ -1076,6 +1104,7 @@ function App() {
           <directionalLight position={[-3, 2, -4]} intensity={0.9} />
           <Suspense fallback={null}>
             <PokedexModel
+              animatedSpriteUrl={animatedSpriteUrl}
               concealed={mode === "game" && !isGameRoundRevealed}
               flavorText={flavorText}
               onDPadStep={
@@ -1219,7 +1248,7 @@ function App() {
                 type="submit"
               >
                 {isGameRoundRevealed
-                  ? `Next (${nextRoundSeconds ?? 10}s)`
+                  ? `Next (${nextRoundSeconds ?? NEXT_ROUND_DELAY_SECONDS}s)`
                   : "Guess"}
               </button>
             </div>
