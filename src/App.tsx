@@ -269,6 +269,7 @@ const POKEDEX_SKINS_STORAGE_KEY = "pokedex:owned-skins";
 const POKEDEX_EQUIPPED_SKIN_STORAGE_KEY = "pokedex:equipped-skin";
 const UNCAUGHT_RADAR_STORAGE_KEY = "pokedex:uncaught-radar";
 const INTRO_MUTED_STORAGE_KEY = "pokedex:intro-muted";
+const COMPANION_POKEMON_STORAGE_KEY = "pokedex:companion-pokemon";
 const WHOSE_THAT_POKEMON_VIDEO_ID = "EE-xtCF3T94";
 const WHOSE_THAT_POKEMON_INTRO_SECONDS = 5;
 const WHOSE_THAT_POKEMON_FALLBACK_MS =
@@ -471,10 +472,12 @@ function CapturedPokemonCollection({
   capturedPokemonIds,
   shinyCapturedPokemonIds,
   onClose,
+  onChooseCompanion,
 }: {
   capturedPokemonIds: Set<number>;
   shinyCapturedPokemonIds: Set<number>;
   onClose: () => void;
+  onChooseCompanion: (pokemonId: number) => void;
 }) {
   const [pokemonIndex, setPokemonIndex] = useState<PokemonIndexEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -711,6 +714,9 @@ function CapturedPokemonCollection({
                     ))}
                   </ul>
                 </div>
+                <button className="hint-button" onClick={() => onChooseCompanion(selectedPokemon.id)} type="button">
+                  Choose {formatPokemonName(selectedPokemon.name)} as companion
+                </button>
               </>
             ) : null}
           </section>
@@ -2423,6 +2429,22 @@ function ScanTargetSprite({
   );
 }
 
+function CompanionPokemon({ pokemonId, shiny }: { pokemonId: number; shiny: boolean }) {
+  const companionRef = useRef<Group>(null);
+  useFrame(({ clock }) => {
+    if (!companionRef.current) return;
+    companionRef.current.position.y = -1.72 + Math.sin(clock.getElapsedTime() * 1.4) * 0.08;
+    companionRef.current.rotation.z = Math.sin(clock.getElapsedTime() * 1.1) * 0.05;
+  });
+  return (
+    <group ref={companionRef} position={[-2.55, -1.72, -4.55]}>
+      <Html center transform scale={0.55} style={{ pointerEvents: "none" }}>
+        <img alt="Selected companion Pokemon" draggable={false} src={shiny ? getShinySpriteUrl(pokemonId) : getSpriteUrl(pokemonId)} style={{ display: "block", height: "130px", imageRendering: "pixelated", objectFit: "contain", width: "130px" }} />
+      </Html>
+    </group>
+  );
+}
+
 function LegendarySkinDecal({ skin }: { skin: PokedexSkin }) {
   const trailRef = useRef<Group>(null);
   const isFlame = skin.legendaryEffect === "Flame";
@@ -2976,6 +2998,10 @@ function App() {
     getSavedShinyCapturedPokemonIds,
   );
   const [isCollectionOpen, setIsCollectionOpen] = useState(false);
+  const [companionPokemonId, setCompanionPokemonId] = useState<number | null>(() => {
+    const savedId = Number(window.localStorage.getItem(COMPANION_POKEMON_STORAGE_KEY));
+    return Number.isInteger(savedId) && savedId >= 1 && savedId <= GAME_POKEMON_COUNT ? savedId : null;
+  });
   const [nextRoundSeconds, setNextRoundSeconds] = useState<number | null>(null);
   const [roundSecondsRemaining, setRoundSecondsRemaining] = useState(
     ROUND_TIME_LIMIT_SECONDS,
@@ -3162,6 +3188,10 @@ function App() {
   }, [completedRounds]);
   useEffect(() => { window.localStorage.setItem(POKEDEX_SKINS_STORAGE_KEY, JSON.stringify([...ownedSkins])); }, [ownedSkins]);
   useEffect(() => { window.localStorage.setItem(POKEDEX_EQUIPPED_SKIN_STORAGE_KEY, equippedSkin); }, [equippedSkin]);
+  useEffect(() => {
+    if (companionPokemonId === null) window.localStorage.removeItem(COMPANION_POKEMON_STORAGE_KEY);
+    else window.localStorage.setItem(COMPANION_POKEMON_STORAGE_KEY, String(companionPokemonId));
+  }, [companionPokemonId]);
   useEffect(() => { window.localStorage.setItem(UNCAUGHT_RADAR_STORAGE_KEY, String(hasUncaughtRadar)); }, [hasUncaughtRadar]);
   useEffect(() => { window.localStorage.setItem(INTRO_MUTED_STORAGE_KEY, String(isIntroMuted)); }, [isIntroMuted]);
 
@@ -3894,6 +3924,7 @@ function App() {
               spriteUrl={spriteUrl}
               typeNames={typeNames}
             />
+            {companionPokemonId !== null ? <CompanionPokemon pokemonId={companionPokemonId} shiny={shinyCapturedPokemonIds.has(companionPokemonId)} /> : null}
           </Suspense>
           <OrbitControls
             enablePan={true}
@@ -4244,6 +4275,10 @@ function App() {
         <CapturedPokemonCollection
           capturedPokemonIds={capturedPokemonIds}
           shinyCapturedPokemonIds={shinyCapturedPokemonIds}
+          onChooseCompanion={(pokemonId) => {
+            setCompanionPokemonId(pokemonId);
+            setIsCollectionOpen(false);
+          }}
           onClose={() => setIsCollectionOpen(false)}
         />
       ) : null}
