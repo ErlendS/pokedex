@@ -4118,7 +4118,12 @@ function App() {
               className="lookup-form"
               onSubmit={(event) => {
                 event.preventDefault();
-                setSubmittedQuery(query);
+                const normalizedQuery = normalizePokemonName(query);
+                const prefixMatch = voicePokemonIndex.find((candidate) =>
+                  normalizePokemonName(candidate.name).startsWith(normalizedQuery),
+                );
+                const fuzzyMatch = findVoicePokemonMatch(query, voicePokemonIndex);
+                setSubmittedQuery(prefixMatch?.name ?? fuzzyMatch?.name ?? query);
               }}
             >
               <label htmlFor="pokemon-query">Pokemon</label>
