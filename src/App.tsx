@@ -2413,9 +2413,9 @@ function PokedexModel({
     </group>
     <primitive
       object={skinnedHand}
-      position={[3.6, -1.55, -0.1]}
-      rotation={[0.06, Math.PI + 0.12, -0.18]}
-      scale={0.8}
+      position={[3.35, -1.72, -0.1]}
+      rotation={[0.12, 0.22, -Math.PI / 2]}
+      scale={[-0.8, 0.8, 0.8]}
     />
     </>
   );
