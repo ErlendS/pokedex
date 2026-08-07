@@ -12,12 +12,17 @@ import {
 } from "react";
 import type { CSSProperties } from "react";
 import {
+  BufferGeometry,
   CanvasTexture,
   DoubleSide,
+  Float32BufferAttribute,
   Group,
   InstancedMesh,
   LinearFilter,
+  Mesh,
+  MeshStandardMaterial,
   Object3D,
+  ShaderMaterial,
   Shape,
   SRGBColorSpace,
 } from "three";
@@ -196,6 +201,14 @@ const INITIAL_QUERY = "25";
 const GAME_POKEMON_COUNT = 1_025;
 const RECENT_GAME_POKEMON_WINDOW = 25;
 const POKEDEX_SCREEN_POSITION: [number, number, number] = [0.053, 0.054, 0.685];
+// Keep these references stable: passing fresh camera/target objects on every
+// app update makes controls re-apply their defaults after unrelated actions
+// such as selecting a generation.
+const VIEWER_CAMERA = {
+  position: [7.8, 2.35, 7.4] as [number, number, number],
+  fov: 55,
+};
+const VIEWER_ORBIT_TARGET: [number, number, number] = [0, -0.9, -2.8];
 const D_PAD_CENTER = {
   x: 0.078,
   y: -0.648,
@@ -220,11 +233,12 @@ const EXTRA_TIME_SECONDS = 5;
 const EXTRA_TIME_HINT_COST = 100;
 const CONFETTI_UPGRADE_COST = 250;
 const CONFETTI_MAX_LEVEL = 1_000;
-const CONFETTI_MAX_PARTICLES = 1_024;
+const CONFETTI_DURATION_SECONDS = 5;
 const NAME_REVEAL_UPGRADE_COST = 150;
 const NAME_REVEAL_MAX_LEVEL = 10;
 const POKEDEX_SKIN_COST = 1_000;
-const SHINY_ROUND_CHANCE = 1 / 8_192;
+const UNCAUGHT_RADAR_COST = 1_000;
+const SHINY_ROUND_CHANCE = 0.2;
 const APP_MODE_STORAGE_KEY = "pokedex:mode";
 const CAPTURED_POKEMON_STORAGE_KEY = "pokedex:captured-pokemon";
 const SHINY_CAPTURED_POKEMON_STORAGE_KEY = "pokedex:shiny-captured-pokemon";
@@ -236,6 +250,7 @@ const NAME_REVEAL_UPGRADE_STORAGE_KEY = "pokedex:name-reveal-upgrade";
 const COMPLETED_ROUNDS_STORAGE_KEY = "pokedex:completed-rounds";
 const POKEDEX_SKINS_STORAGE_KEY = "pokedex:owned-skins";
 const POKEDEX_EQUIPPED_SKIN_STORAGE_KEY = "pokedex:equipped-skin";
+const UNCAUGHT_RADAR_STORAGE_KEY = "pokedex:uncaught-radar";
 const POKEDEX_SKINS = [
   { id: "classic", label: "Classic Red" }, { id: "midnight", label: "Midnight" },
   { id: "neon", label: "Neon Cyber" }, { id: "forest", label: "Forest Ranger" },
@@ -395,12 +410,16 @@ function getSavedCapturedPokemonIds() {
     }
 
     return new Set(
-      parsedCaptures.filter(
-        (pokemonId): pokemonId is number =>
-          Number.isInteger(pokemonId) &&
-          pokemonId >= 1 &&
-          pokemonId <= GAME_POKEMON_COUNT,
-      ),
+      parsedCaptures
+        .map((pokemonId) =>
+          typeof pokemonId === "string" ? Number(pokemonId) : pokemonId,
+        )
+        .filter(
+          (pokemonId): pokemonId is number =>
+            Number.isInteger(pokemonId) &&
+            pokemonId >= 1 &&
+            pokemonId <= GAME_POKEMON_COUNT,
+        ),
     );
   } catch {
     return new Set<number>();
@@ -784,17 +803,24 @@ function getPokemonIdsForGenerations(generationIds: readonly number[]) {
 function getRandomGamePokemonId(
   generationIds: readonly number[],
   recentPokemonIds: readonly number[] = [],
+  capturedPokemonIds?: ReadonlySet<number>,
 ) {
   const recentPokemonIdSet = new Set(recentPokemonIds);
   const selectedPokemonIds = getPokemonIdsForGenerations(generationIds);
   const eligiblePokemonIds = selectedPokemonIds.filter(
     (pokemonId) => !recentPokemonIdSet.has(pokemonId),
   );
+  const uncaughtPokemonIds = capturedPokemonIds
+    ? eligiblePokemonIds.filter((pokemonId) => !capturedPokemonIds.has(pokemonId))
+    : [];
+  const allUncaughtPokemonIds = capturedPokemonIds
+    ? selectedPokemonIds.filter((pokemonId) => !capturedPokemonIds.has(pokemonId))
+    : [];
 
   // This fallback keeps the selector safe if the game pool is ever smaller
   // than the recent-round window.
   const pokemonIds =
-    eligiblePokemonIds.length > 0
+    uncaughtPokemonIds.length > 0 ? uncaughtPokemonIds : allUncaughtPokemonIds.length > 0 ? allUncaughtPokemonIds : eligiblePokemonIds.length > 0
       ? eligiblePokemonIds
       : selectedPokemonIds;
 
@@ -1409,6 +1435,7 @@ function PokedexScreen({
   concealed,
   flavorText,
   revealAmount,
+  showShinyIndicator,
   spriteUrl,
   typeNames,
 }: {
@@ -1416,6 +1443,7 @@ function PokedexScreen({
   concealed: boolean;
   flavorText: string | null;
   revealAmount: number;
+  showShinyIndicator: boolean;
   spriteUrl: string | null;
   typeNames: string[];
 }) {
@@ -1431,7 +1459,33 @@ function PokedexScreen({
           spriteUrl={spriteUrl}
         />
       ) : null}
+      {showShinyIndicator ? <ShinySilhouetteIndicator /> : null}
       {flavorText ? <FlavorTextOverlay text={flavorText} /> : null}
+    </group>
+  );
+}
+
+function ShinySilhouetteIndicator() {
+  const sparklesRef = useRef<Group>(null);
+
+  useFrame((_, delta) => {
+    if (sparklesRef.current) {
+      sparklesRef.current.rotation.z += delta * 1.5;
+    }
+  });
+
+  return (
+    <group ref={sparklesRef} position={[0, 0, 0.02]}>
+      {[
+        [-0.29, 0.2], [0.29, 0.16], [-0.25, -0.2], [0.25, -0.18],
+        [0, 0.27], [0, -0.27],
+      ].map(([x, y], index) => (
+        <mesh key={index} position={[x, y, 0]} rotation={[0, 0, Math.PI / 4]}>
+          <planeGeometry args={[0.045, 0.045]} />
+          <meshBasicMaterial color="#fff1a0" toneMapped={false} transparent opacity={0.95} />
+        </mesh>
+      ))}
+      <pointLight color="#ffe47a" distance={0.7} intensity={1.2} />
     </group>
   );
 }
@@ -1588,13 +1642,11 @@ function LandscapeTree({
 
 const ScanEnvironment = memo(function ScanEnvironment({
   animatedSpriteUrl,
-  concealed,
   habitat,
   isEvening,
   spriteUrl,
 }: {
   animatedSpriteUrl: string | null;
-  concealed: boolean;
   habitat: string;
   isEvening: boolean;
   spriteUrl: string | null;
@@ -1659,6 +1711,13 @@ const ScanEnvironment = memo(function ScanEnvironment({
   const wildflowers = [
     [-5.8, -6.6], [-4.3, -7.4], [-3.35, -6.95], [-2.1, -8.25],
     [-0.8, -7.3], [1.15, -7.8], [2.3, -6.72], [3.65, -7.65], [5.3, -6.95],
+  ] as const;
+  const wildflowerPatches = [
+    [-5.5, -5.9], [-4.6, -6.25], [-3.7, -5.75], [-2.8, -6.45],
+    [-1.9, -5.95], [-0.9, -6.6], [-4.9, -8.1], [-3.95, -8.7],
+    [-2.9, -9.25], [-1.75, -9.85], [3.85, -5.85], [4.75, -6.35],
+    [5.65, -6.85], [3.75, -8.35], [4.75, -8.95], [5.85, -9.45],
+    [-5.75, -9.3], [-4.75, -10.15], [4.15, -10.4], [5.25, -11.15],
   ] as const;
   const fencePosts = [
     [-4.8, -6.4], [-3.7, -6.95], [-2.6, -7.5], [2.95, -7.4], [4.15, -6.8],
@@ -1742,6 +1801,22 @@ const ScanEnvironment = memo(function ScanEnvironment({
           </mesh>
         </group>
       ))}
+      {wildflowerPatches.map(([x, z], index) => (
+        <group key={`flower-patch-${x}-${z}`} position={[x, -3.48, z]}>
+          {[-0.15, 0, 0.15].map((offset, flowerIndex) => (
+            <group key={offset} position={[offset, flowerIndex === 1 ? 0.04 : 0, flowerIndex === 1 ? 0.08 : -0.05]}>
+              <mesh position={[0, 0.1, 0]}>
+                <cylinderGeometry args={[0.01, 0.018, 0.2, 4]} />
+                <meshStandardMaterial color="#386d38" roughness={1} />
+              </mesh>
+              <mesh position={[0, 0.22, 0]}>
+                <sphereGeometry args={[0.065, 5, 4]} />
+                <meshStandardMaterial color={index % 4 === 0 ? "#f2d96b" : index % 4 === 1 ? "#f49bb3" : index % 4 === 2 ? "#d8d0ff" : "#f7a45c"} roughness={0.85} />
+              </mesh>
+            </group>
+          ))}
+        </group>
+      ))}
       {hasCountryRoad ? fencePosts.map(([x, z], index) => (
         <group key={`fence-${x}-${z}`} position={[x, -3.35, z]}>
           <mesh>
@@ -1801,7 +1876,7 @@ const ScanEnvironment = memo(function ScanEnvironment({
           </mesh>
         </group>
       ) : null}
-      <group position={[1.45, -1.48, -8.2]} scale={1.75}>
+      <group position={[2.4, -1.1, -8.2]} scale={1.75}>
         <mesh castShadow>
           <sphereGeometry args={[0.82, 14, 10]} />
           <meshStandardMaterial color="#d9f0c5" roughness={0.72} />
@@ -1812,14 +1887,13 @@ const ScanEnvironment = memo(function ScanEnvironment({
         </mesh>
         <Html
           center
-          position={[0, 0.03, 0.84]}
+          position={[0, 0.35, 1.18]}
           scale={0.48}
           style={{ pointerEvents: "none" }}
           transform
         >
           <AnimatedScanTarget
             animatedSpriteUrl={animatedSpriteUrl}
-            concealed={concealed}
             key={animatedSpriteUrl ?? spriteUrl}
             spriteUrl={spriteUrl}
           />
@@ -1832,11 +1906,9 @@ const ScanEnvironment = memo(function ScanEnvironment({
 
 function AnimatedScanTarget({
   animatedSpriteUrl,
-  concealed,
   spriteUrl,
 }: {
   animatedSpriteUrl: string | null;
-  concealed: boolean;
   spriteUrl: string | null;
 }) {
   const fallbackUrl = spriteUrl ?? getSpriteUrl(25);
@@ -1847,13 +1919,13 @@ function AnimatedScanTarget({
 
   return (
     <img
-      alt={concealed ? "Mystery Pokemon silhouette" : "Pokemon scan target"}
+      alt="Pokemon scan target"
       draggable={false}
       onError={() => setFailedAnimatedUrl(preferredUrl)}
       src={displayUrl}
       style={{
         display: "block",
-        filter: concealed ? "brightness(0)" : "none",
+        filter: "none",
         height: 168,
         imageRendering: "pixelated",
         objectFit: "contain",
@@ -1868,6 +1940,8 @@ function PokedexModel({
   concealed,
   flavorText,
   revealAmount,
+  skin,
+  showShinyIndicator,
   onDPadStep,
   spriteUrl,
   typeNames,
@@ -1876,22 +1950,68 @@ function PokedexModel({
   concealed: boolean;
   flavorText: string | null;
   revealAmount: number;
+  skin: PokedexSkinId;
+  showShinyIndicator: boolean;
   onDPadStep: (delta: -1 | 1) => void;
   spriteUrl: string | null;
   typeNames: string[];
 }) {
   const { scene } = useGLTF("/Pokedex.glb");
   const { scene: handScene } = useGLTF("/PokedexHand.glb");
+  const skinnedScene = useMemo(() => {
+    const clone = scene.clone(true);
+    clone.traverse((object) => {
+      if (object instanceof Mesh) {
+        object.material = Array.isArray(object.material)
+          ? object.material.map((material) => material.clone())
+          : object.material.clone();
+      }
+    });
+    return clone;
+  }, [scene]);
+
+  useEffect(() => {
+    const finish: Record<PokedexSkinId, { color: [number, number, number]; metalness: number; roughness: number }> = {
+      classic: { color: [0.711, 0.006, 0.031], metalness: 0.08, roughness: 0.45 },
+      midnight: { color: [0.045, 0.09, 0.2], metalness: 0.38, roughness: 0.28 },
+      neon: { color: [0.29, 0.045, 0.8], metalness: 0.48, roughness: 0.2 },
+      forest: { color: [0.06, 0.42, 0.14], metalness: 0.1, roughness: 0.52 },
+      ocean: { color: [0.02, 0.34, 0.7], metalness: 0.3, roughness: 0.26 },
+      gold: { color: [0.86, 0.48, 0.035], metalness: 0.75, roughness: 0.21 },
+    };
+    const selectedFinish = finish[skin];
+
+    skinnedScene.traverse((object) => {
+      if (!(object instanceof Mesh)) {
+        return;
+      }
+      const materials = Array.isArray(object.material)
+        ? object.material
+        : [object.material];
+      materials.forEach((material) => {
+        if (
+          material instanceof MeshStandardMaterial &&
+          (material.name === "Red" || material.name === "Pinkish")
+        ) {
+          material.color.setRGB(...selectedFinish.color);
+          material.metalness = selectedFinish.metalness;
+          material.roughness = selectedFinish.roughness;
+          material.needsUpdate = true;
+        }
+      });
+    });
+  }, [skin, skinnedScene]);
 
   return (
     <>
     <group position={[0.7, -0.7, 0.35]} rotation={[0, -0.99, 0]} scale={2.15}>
-      <primitive object={scene} />
+      <primitive object={skinnedScene} />
       <PokedexScreen
         animatedSpriteUrl={animatedSpriteUrl}
         concealed={concealed}
         flavorText={flavorText}
         revealAmount={revealAmount}
+        showShinyIndicator={showShinyIndicator}
         spriteUrl={spriteUrl}
         typeNames={typeNames}
       />
@@ -1904,6 +2024,103 @@ function PokedexModel({
       scale={1.7}
     />
     </>
+  );
+}
+
+function WorldConfetti({ level }: { level: number }) {
+  const particleCount = useMemo(() => {
+    const hardwareThreads = navigator.hardwareConcurrency ?? 4;
+    const adaptiveCap =
+      hardwareThreads >= 8 ? 200_000 : hardwareThreads >= 6 ? 120_000 : 60_000;
+
+    return Math.min(adaptiveCap, 4_000 + level * 250);
+  }, [level]);
+  const particleSystem = useMemo(() => {
+    const geometry = new BufferGeometry();
+    const colors = new Float32Array(particleCount * 3);
+    const origins = new Float32Array(particleCount * 3);
+    const velocities = new Float32Array(particleCount * 3);
+    const landingTimes = new Float32Array(particleCount);
+    const emitters: Array<[number, number, number]> = [
+      [-0.8, -0.5, 0.5],
+      [1.25, -0.7, -0.4],
+      [2.3, -1.1, -5.8],
+      [-2.1, -1.5, -4.5],
+      [0.4, -0.2, -2.2],
+    ];
+    const palette: Array<[number, number, number]> = [
+      [1, 0.3, 0.36],
+      [1, 0.86, 0.2],
+      [0.25, 0.82, 1],
+      [0.44, 0.96, 0.46],
+      [0.78, 0.43, 1],
+      [1, 0.55, 0.16],
+    ];
+
+    for (let index = 0; index < particleCount; index += 1) {
+      const offset = index * 3;
+      const emitter = emitters[index % emitters.length];
+      const hue = palette[index % palette.length];
+      // A low-cost deterministic spread keeps dense bursts evenly distributed.
+      const angle = (index * 2.399963229728653) % (Math.PI * 2);
+      const speed = 1.5 + ((index * 37) % 100) / 27;
+      const verticalSpeed = 2.4 + ((index * 53) % 100) / 16;
+      const originX = emitter[0] + Math.cos(index * 0.71) * 0.22;
+      const originY = emitter[1] + ((index % 9) - 4) * 0.035;
+      const originZ = emitter[2] + Math.sin(index * 0.47) * 0.22;
+      const impactTime =
+        (verticalSpeed + Math.sqrt(verticalSpeed ** 2 + 2 * 4.8 * (originY + 3.64))) /
+        4.8;
+
+      origins.set([originX, originY, originZ], offset);
+      velocities.set(
+        [Math.cos(angle) * speed, verticalSpeed, Math.sin(angle) * speed],
+        offset,
+      );
+      colors.set(hue, offset);
+      landingTimes[index] = Math.min(CONFETTI_DURATION_SECONDS, impactTime);
+    }
+
+    geometry.setAttribute("position", new Float32BufferAttribute(origins, 3));
+    geometry.setAttribute("origin", new Float32BufferAttribute(origins, 3));
+    geometry.setAttribute("velocity", new Float32BufferAttribute(velocities, 3));
+    geometry.setAttribute("landingTime", new Float32BufferAttribute(landingTimes, 1));
+    geometry.setAttribute("color", new Float32BufferAttribute(colors, 3));
+    return { geometry };
+  }, [particleCount]);
+  const startedAt = useRef<number | null>(null);
+  const materialRef = useRef<ShaderMaterial>(null);
+
+  useEffect(() => () => particleSystem.geometry.dispose(), [particleSystem]);
+
+  useFrame(({ clock }) => {
+    if (startedAt.current === null) {
+      startedAt.current = clock.getElapsedTime();
+    }
+
+    if (materialRef.current) {
+      materialRef.current.uniforms.elapsed.value = Math.min(
+        CONFETTI_DURATION_SECONDS,
+        clock.getElapsedTime() - startedAt.current,
+      );
+    }
+  });
+
+  return (
+    <points frustumCulled={false} geometry={particleSystem.geometry}>
+      <shaderMaterial
+        depthWrite={false}
+        transparent
+        fragmentShader={
+          "varying vec3 vColor; void main() { if (length(gl_PointCoord - vec2(0.5)) > 0.5) discard; gl_FragColor = vec4(vColor, 0.94); }"
+        }
+        ref={materialRef}
+        uniforms={{ elapsed: { value: 0 } }}
+        vertexShader={
+          "attribute vec3 origin; attribute vec3 velocity; attribute vec3 color; attribute float landingTime; uniform float elapsed; varying vec3 vColor; void main() { float t = min(elapsed, landingTime); vec3 worldPosition = origin + velocity * t; worldPosition.y = max(-3.64, origin.y + velocity.y * t - 2.4 * t * t); vec4 mvPosition = modelViewMatrix * vec4(worldPosition, 1.0); gl_Position = projectionMatrix * mvPosition; gl_PointSize = clamp(7.0 * (180.0 / -mvPosition.z), 2.0, 9.0); vColor = color; }"
+        }
+      />
+    </points>
   );
 }
 
@@ -2180,12 +2397,14 @@ function App() {
     () => getSavedOwnedSkins(),
   );
   const [equippedSkin, setEquippedSkin] = useState<PokedexSkinId>(() => (window.localStorage.getItem(POKEDEX_EQUIPPED_SKIN_STORAGE_KEY) as PokedexSkinId) || "classic");
+  const [hasUncaughtRadar, setHasUncaughtRadar] = useState(() => window.localStorage.getItem(UNCAUGHT_RADAR_STORAGE_KEY) === "true");
   const [isIntroComplete, setIsIntroComplete] = useState(false);
   const [isHintVisible, setIsHintVisible] = useState(false);
   const [nameRevealLevel, setNameRevealLevel] = useState(getSavedNameRevealLevel);
   const [hasBoughtExtraTime, setHasBoughtExtraTime] = useState(false);
   const [confettiLevel, setConfettiLevel] = useState(getSavedConfettiLevel);
   const [showConfetti, setShowConfetti] = useState(false);
+  const [confettiEventId, setConfettiEventId] = useState(0);
   const [showShinyCelebration, setShowShinyCelebration] = useState(false);
   const [isShinyRound, setIsShinyRound] = useState(
     () => initialMode === "game" && Math.random() < SHINY_ROUND_CHANCE,
@@ -2222,9 +2441,18 @@ function App() {
     setRoundResult("guessing");
     setNextRoundSeconds(null);
     setRoundSecondsRemaining(ROUND_TIME_LIMIT_SECONDS);
+    const selectedIds = getPokemonIdsForGenerations(generationIds);
+    const hasUncaughtEligiblePokemon = selectedIds.some(
+      (pokemonId) => !capturedPokemonIds.has(pokemonId),
+    );
+    if (hasUncaughtRadar && !hasUncaughtEligiblePokemon) {
+      setWalletRewardMessage("Radar: all selected Pokémon are already captured. Choose more generations.");
+      return;
+    }
     const nextPokemonId = getRandomGamePokemonId(
       generationIds,
       recentGamePokemonIdsRef.current,
+      hasUncaughtRadar ? capturedPokemonIds : undefined,
     );
     recentGamePokemonIdsRef.current = rememberGamePokemonId(
       recentGamePokemonIdsRef.current,
@@ -2239,7 +2467,7 @@ function App() {
     hasCountedCurrentRoundRef.current = false;
     setHasBoughtExtraTime(false);
     setIsShinyRound(Math.random() < SHINY_ROUND_CHANCE);
-  }, [selectedGenerations]);
+  }, [capturedPokemonIds, hasUncaughtRadar, selectedGenerations]);
 
   useEffect(() => {
     saveRecentGamePokemonIds(recentGamePokemonIdsRef.current);
@@ -2323,6 +2551,7 @@ function App() {
   }, [completedRounds]);
   useEffect(() => { window.localStorage.setItem(POKEDEX_SKINS_STORAGE_KEY, JSON.stringify([...ownedSkins])); }, [ownedSkins]);
   useEffect(() => { window.localStorage.setItem(POKEDEX_EQUIPPED_SKIN_STORAGE_KEY, equippedSkin); }, [equippedSkin]);
+  useEffect(() => { window.localStorage.setItem(UNCAUGHT_RADAR_STORAGE_KEY, String(hasUncaughtRadar)); }, [hasUncaughtRadar]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -2525,10 +2754,8 @@ function App() {
     const timeout = window.setTimeout(() => {
       setCompletedRounds((currentRounds) => {
         const nextRounds = currentRounds + 1;
-        if (nextRounds % 10 === 0) {
-          setGameStats((currentStats) => ({ ...currentStats, score: currentStats.score + 100 }));
-          setWalletRewardMessage("10 rounds complete! +100 wallet points.");
-        }
+        setGameStats((currentStats) => ({ ...currentStats, score: currentStats.score + 10_000 }));
+        setWalletRewardMessage("Round complete! +10,000 wallet points.");
         return nextRounds;
       });
     }, 0);
@@ -2649,8 +2876,9 @@ function App() {
         return new Set([...currentSkins, reward.id]);
       });
       if (confettiLevel > 0) {
+        setConfettiEventId((eventId) => eventId + 1);
         setShowConfetti(true);
-        window.setTimeout(() => setShowConfetti(false), 1_600);
+        window.setTimeout(() => setShowConfetti(false), 5_000);
       }
       setCapturedPokemonIds((currentCaptures) => {
         if (currentCaptures.has(pokemonState.pokemon.id)) {
@@ -2745,6 +2973,11 @@ function App() {
     setGameStats((stats) => ({ ...stats, score: stats.score - POKEDEX_SKIN_COST }));
     setOwnedSkins((skins) => new Set([...skins, skinId]));
     setEquippedSkin(skinId);
+  };
+  const buyUncaughtRadar = () => {
+    if (hasUncaughtRadar || gameStats.score < UNCAUGHT_RADAR_COST) return;
+    setGameStats((stats) => ({ ...stats, score: stats.score - UNCAUGHT_RADAR_COST }));
+    setHasUncaughtRadar(true);
   };
   const selectedVoicePokemonCandidates = useMemo(() => {
     const selectedIds = new Set(getPokemonIdsForGenerations(selectedGenerations));
@@ -2924,7 +3157,7 @@ function App() {
               ? 0
               : Math.min(
                 pokemonState.pokemon.name.replace(/[^a-z]/gi, "").length - 1,
-                Math.max(0, roundElapsedSeconds - 10) * nameRevealLevel,
+                Math.max(0, roundElapsedSeconds - 10),
               ),
         )
       : "";
@@ -2935,34 +3168,17 @@ function App() {
         onComplete={() => setIsIntroComplete(true)}
         playbackKey={introPlaybackKey}
       />
-      {showConfetti ? (
-        <div aria-hidden="true" className="confetti-burst">
-          {Array.from(
-            {
-              length: Math.min(
-                CONFETTI_MAX_PARTICLES,
-                24 + confettiLevel,
-              ),
-            },
-            (_, index) => (
-            <span
-              key={index}
-              style={
-                {
-                  "--confetti-index": index,
-                  "--confetti-scale": Math.min(1.8, 1 + confettiLevel * 0.1),
-                } as CSSProperties
-              }
-            />
-            ),
-          )}
-        </div>
-      ) : null}
       {showShinyCelebration ? (
         <div aria-hidden="true" className="shiny-fireworks">
           {Array.from({ length: 42 }, (_, index) => (
             <span key={index} style={{ "--firework-index": index } as CSSProperties} />
           ))}
+        </div>
+      ) : null}
+      {isShinyRound && mode === "game" && !isGameRoundRevealed ? (
+        <div aria-live="polite" className="shiny-round-alert">
+          <span aria-hidden="true">✦ ✧ ✦</span>
+          <strong>Shiny found!</strong>
         </div>
       ) : null}
       {isShinyRound && isGameRoundRevealed ? (
@@ -2972,7 +3188,7 @@ function App() {
       ) : null}
       <main className={`pokedex-app skin-${equippedSkin}${showShinyCelebration ? " is-shaking" : ""}`}>
       <section className="viewer-shell" aria-label="Interactive Pokedex model">
-        <Canvas shadows camera={{ position: [6.7, 2, 4.8], fov: 60 }}>
+        <Canvas shadows camera={VIEWER_CAMERA}>
           <color attach="background" args={[isEvening ? "#2a3150" : "#8fc8ec"]} />
           <ambientLight intensity={isEvening ? 0.75 : 1.35} />
           <directionalLight
@@ -2987,9 +3203,14 @@ function App() {
             intensity={isEvening ? 0.65 : 0.9}
           />
           <Suspense fallback={null}>
+            {showConfetti ? (
+              <WorldConfetti
+                key={`world-confetti-${confettiLevel}-${confettiEventId}`}
+                level={confettiLevel}
+              />
+            ) : null}
             <ScanEnvironment
               animatedSpriteUrl={animatedSpriteUrl}
-              concealed={false}
               habitat={habitat}
               isEvening={isEvening}
               spriteUrl={spriteUrl}
@@ -2999,6 +3220,10 @@ function App() {
               concealed={isCurrentGamePokemonConcealed}
               flavorText={flavorText}
               revealAmount={silhouetteRevealAmount}
+              skin={equippedSkin}
+              showShinyIndicator={
+                isCurrentGamePokemonConcealed && isShinyRound
+              }
               onDPadStep={
                 mode === "lookup" ? loadPokemonByOffset : () => startNewRound()
               }
@@ -3012,7 +3237,7 @@ function App() {
             maxPolarAngle={Math.PI / 2}
             minDistance={2.5}
             minPolarAngle={Math.PI / 4}
-            target={[0, -0.9, -2.8]}
+            target={VIEWER_ORBIT_TARGET}
           />
         </Canvas>
       </section>
@@ -3112,6 +3337,7 @@ function App() {
                 </div>
               </fieldset>
               <div className="game-utilities">
+                <button className="hint-button" disabled={hasUncaughtRadar || gameStats.score < UNCAUGHT_RADAR_COST} onClick={buyUncaughtRadar} type="button">{hasUncaughtRadar ? "Uncaught Radar active" : `Buy Uncaught Radar (${UNCAUGHT_RADAR_COST} pts)`}</button>
                 <div className="skin-shop" aria-label="Pokedex skin shop">
                   <strong>Pokédex skins</strong>
                   {POKEDEX_SKINS.map((skin) => <button className="hint-button" disabled={!ownedSkins.has(skin.id) && gameStats.score < POKEDEX_SKIN_COST} key={skin.id} onClick={() => buyOrEquipSkin(skin.id)} type="button">{equippedSkin === skin.id ? `${skin.label} equipped` : ownedSkins.has(skin.id) ? `Equip ${skin.label}` : `${skin.label} (${POKEDEX_SKIN_COST} pts)`}</button>)}

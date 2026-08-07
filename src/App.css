@@ -25,15 +25,8 @@
     linear-gradient(90deg, rgba(20, 132, 101, 0.08), transparent 34%),
     #f5faf7;
 }
-.skin-midnight { background: #111827; }
-.skin-neon { background: linear-gradient(135deg, #05051b, #160b35); }
-.skin-forest { background: #dbeedb; }
-.skin-ocean { background: #d9f3fa; }
-.skin-gold { background: linear-gradient(135deg, #fff5bf, #d9a52c); }
 .skin-shop { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .skin-shop strong { width: 100%; font-size: 13px; color: #33413d; }
-.skin-midnight .control-panel, .skin-neon .control-panel { background: rgba(18, 24, 42, .95); color: #edf4ff; }
-.skin-midnight .hint-button, .skin-neon .hint-button { color: #dce7ff; background: rgba(255,255,255,.1); border-color: rgba(147,197,253,.35); }
 
 .viewer-shell {
   min-height: 100svh;
@@ -346,12 +339,11 @@
 }
 
 .confetti-burst span {
-  --confetti-angle: calc(var(--confetti-index) * 12.857deg);
   position: absolute;
-  top: 42%;
-  left: 50%;
-  width: calc(9px * var(--confetti-scale));
-  height: calc(14px * var(--confetti-scale));
+  top: var(--confetti-origin-y);
+  left: var(--confetti-origin-x);
+  width: calc(10px * var(--confetti-scale));
+  height: calc(16px * var(--confetti-scale));
   border-radius: 2px;
   background: hsl(calc(var(--confetti-index) * 29deg) 88% 58%);
   animation: confetti-pop 1.5s ease-out forwards;
@@ -360,15 +352,14 @@
 @keyframes confetti-pop {
   from {
     opacity: 1;
-    transform: translate(-50%, -50%) rotate(var(--confetti-angle)) scale(var(--confetti-scale));
+    transform: translate(-50%, -50%) rotate(calc(var(--confetti-index) * 17deg)) scale(var(--confetti-scale));
   }
   to {
     opacity: 0;
     transform: translate(
-        calc(-50% + cos(var(--confetti-angle)) * 42vw),
-        calc(-50% + sin(var(--confetti-angle)) * 34vh + 20vh)
-      )
-      rotate(calc(var(--confetti-angle) + 540deg)) scale(var(--confetti-scale));
+        calc(-50% + var(--confetti-x) * 1vw),
+        calc(-50% + var(--confetti-y) * 1vh)
+      ) rotate(calc(var(--confetti-index) * 17deg + 540deg)) scale(var(--confetti-scale));
   }
 }
 
@@ -425,6 +416,26 @@
 .shiny-orbit span:nth-child(7) { --orbit-index: 6; }
 .shiny-orbit span:nth-child(8) { --orbit-index: 7; }
 
+.shiny-round-alert {
+  position: fixed;
+  z-index: 70;
+  top: 22px;
+  left: 50%;
+  display: grid;
+  gap: 4px;
+  place-items: center;
+  padding: 12px 22px;
+  border: 2px solid #fff3a0;
+  border-radius: 999px;
+  color: #fff8c9;
+  background: radial-gradient(circle, rgba(138, 79, 255, .96), rgba(35, 14, 80, .94));
+  box-shadow: 0 0 20px 8px rgba(255, 225, 81, .75);
+  transform: translateX(-50%);
+  animation: shiny-alert-pulse .9s ease-in-out infinite alternate;
+}
+
+@keyframes shiny-alert-pulse { to { box-shadow: 0 0 40px 18px rgba(255, 225, 81, .9); transform: translateX(-50%) scale(1.06); } }
+
 @keyframes shiny-orbit-spin { to { transform: translate(-50%, -50%) rotate(360deg); } }
 
 @keyframes firework-burst {
@@ -456,6 +467,7 @@
   .confetti-burst span,
   .shiny-fireworks span,
   .shiny-orbit,
+  .shiny-round-alert,
   .pokedex-app.is-shaking {
     animation: none;
   }
