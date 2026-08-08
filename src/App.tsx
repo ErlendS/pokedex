@@ -1,36 +1,28 @@
 /** biome-ignore-all lint/a11y/noStaticElementInteractions: <explanation> */
-import { Html, OrbitControls, Sky, useGLTF } from "@react-three/drei";
-import { Canvas, useFrame } from "@react-three/fiber";
 import {
-  Suspense,
+  Billboard,
+  Html,
+  OrbitControls,
+  Sky,
+  useGLTF,
+} from "@react-three/drei";
+import { Canvas, useFrame } from "@react-three/fiber";
+import type { CSSProperties } from "react";
+import {
   memo,
+  Suspense,
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
-import type { CSSProperties } from "react";
 import {
-  LEGENDARY_SKIN_COST,
-  POKEDEX_SKIN_BY_ID,
-  POKEDEX_SKINS,
-  SKIN_PURCHASE_COSTS,
-  type PokedexSkin,
-  type PokedexSkinId,
-} from "./skins";
-import {
-  formatPokemonName,
-  getAnimatedShinySpriteUrl,
-  getAnimatedSpriteUrl,
-  getPokemonQueryFromScan,
-  getShinySpriteUrl,
-  getSpriteUrl,
-  normalizePokemonName,
-} from "./pokemon";
-import {
+  AdditiveBlending,
   BufferGeometry,
   CanvasTexture,
+  ClampToEdgeWrapping,
+  Color,
   DoubleSide,
   Float32BufferAttribute,
   Group,
@@ -38,12 +30,33 @@ import {
   LinearFilter,
   Mesh,
   MeshStandardMaterial,
+  NearestFilter,
   Object3D,
+  PlaneGeometry,
+  RepeatWrapping,
   ShaderMaterial,
   Shape,
   SRGBColorSpace,
   Vector3,
 } from "three";
+import {
+  formatPokemonName,
+  getAnimatedShinySpriteUrl,
+  getAnimatedSpriteUrl,
+  getNameSimilarity,
+  getPokemonQueryFromScan,
+  getShinySpriteUrl,
+  getSpriteUrl,
+  normalizePokemonName,
+} from "./pokemon";
+import {
+  LEGENDARY_SKIN_COST,
+  POKEDEX_SKIN_BY_ID,
+  POKEDEX_SKINS,
+  type PokedexSkin,
+  type PokedexSkinId,
+  SKIN_PURCHASE_COSTS,
+} from "./skins";
 import "./App.css";
 
 type Pokemon = {
@@ -250,6 +263,10 @@ const SPRITE_HTML_SCALE = 0.15;
 const NEXT_ROUND_DELAY_SECONDS = 3;
 const ROUND_TIME_LIMIT_SECONDS = 20;
 const MAX_ROUND_POINTS = 100;
+// A guess that's close but not letter-perfect (a typo, a missing letter)
+// still counts as a catch, just for reduced points.
+const FUZZY_MATCH_THRESHOLD = 0.9;
+const FUZZY_MATCH_SCORE_MULTIPLIER = 0.5;
 const MINIMUM_STARTING_SCORE = 500;
 const EXTRA_TIME_SECONDS = 5;
 const EXTRA_TIME_HINT_COST = 100;
@@ -279,7 +296,18 @@ const WHOSE_THAT_POKEMON_VIDEO_ID = "EE-xtCF3T94";
 const WHOSE_THAT_POKEMON_INTRO_SECONDS = 5;
 const WHOSE_THAT_POKEMON_FALLBACK_MS =
   (WHOSE_THAT_POKEMON_INTRO_SECONDS + 1) * 1_000;
-const KONAMI_CODE = ["ArrowUp", "ArrowUp", "ArrowDown", "ArrowDown", "ArrowLeft", "ArrowRight", "ArrowLeft", "ArrowRight", "KeyB", "KeyA"] as const;
+const KONAMI_CODE = [
+  "ArrowUp",
+  "ArrowUp",
+  "ArrowDown",
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+  "ArrowLeft",
+  "ArrowRight",
+  "KeyB",
+  "KeyA",
+] as const;
 
 const GAME_GENERATIONS = [
   { id: 1, label: "Gen I", start: 1, end: 151 },
@@ -302,7 +330,9 @@ function getSavedAppMode(): AppMode {
 }
 
 function getSavedGameScore() {
-  const savedScore = Number(window.localStorage.getItem(GAME_SCORE_STORAGE_KEY));
+  const savedScore = Number(
+    window.localStorage.getItem(GAME_SCORE_STORAGE_KEY),
+  );
 
   return Number.isFinite(savedScore)
     ? Math.max(MINIMUM_STARTING_SCORE, Math.floor(savedScore))
@@ -324,27 +354,46 @@ function getSavedConfettiLevel() {
 }
 
 function getSavedNameRevealLevel() {
-  const savedLevel = Number(window.localStorage.getItem(NAME_REVEAL_UPGRADE_STORAGE_KEY));
+  const savedLevel = Number(
+    window.localStorage.getItem(NAME_REVEAL_UPGRADE_STORAGE_KEY),
+  );
   return Number.isFinite(savedLevel)
     ? Math.min(NAME_REVEAL_MAX_LEVEL, Math.max(0, Math.floor(savedLevel)))
     : 0;
 }
 
 function getSavedCompletedRounds() {
-  const savedRounds = Number(window.localStorage.getItem(COMPLETED_ROUNDS_STORAGE_KEY));
+  const savedRounds = Number(
+    window.localStorage.getItem(COMPLETED_ROUNDS_STORAGE_KEY),
+  );
   return Number.isInteger(savedRounds) && savedRounds >= 0 ? savedRounds : 0;
 }
 function getSavedOwnedSkins(): Set<PokedexSkinId> {
-  try { const parsed: unknown = JSON.parse(window.localStorage.getItem(POKEDEX_SKINS_STORAGE_KEY) ?? '["classic"]'); return new Set<PokedexSkinId>(Array.isArray(parsed) ? parsed.filter((id): id is PokedexSkinId => POKEDEX_SKINS.some((skin) => skin.id === id)) : ["classic"]); } catch { return new Set<PokedexSkinId>(["classic"]); }
+  try {
+    const parsed: unknown = JSON.parse(
+      window.localStorage.getItem(POKEDEX_SKINS_STORAGE_KEY) ?? '["classic"]',
+    );
+    return new Set<PokedexSkinId>(
+      Array.isArray(parsed)
+        ? parsed.filter((id): id is PokedexSkinId =>
+            POKEDEX_SKINS.some((skin) => skin.id === id),
+          )
+        : ["classic"],
+    );
+  } catch {
+    return new Set<PokedexSkinId>(["classic"]);
+  }
 }
 
 function maskPokemonName(name: string, revealedLetters: number) {
   let shown = 0;
-  return [...formatPokemonName(name)].map((character) => {
-    if (!/[a-z]/i.test(character)) return character;
-    shown += 1;
-    return shown <= revealedLetters ? character : "_";
-  }).join(" ");
+  return [...formatPokemonName(name)]
+    .map((character) => {
+      if (!/[a-z]/i.test(character)) return character;
+      shown += 1;
+      return shown <= revealedLetters ? character : "_";
+    })
+    .join(" ");
 }
 
 function getSavedGameGenerations() {
@@ -394,12 +443,9 @@ function getSavedRecentGamePokemonIds() {
           pokemonId >= 1 &&
           pokemonId <= GAME_POKEMON_COUNT,
       )
-      .reduce<number[]>(
-        (recentPokemonIds, pokemonId) =>
-          [...recentPokemonIds.filter((recentId) => recentId !== pokemonId), pokemonId]
-            .slice(-RECENT_GAME_POKEMON_WINDOW),
-        [],
-      );
+      .reduce<
+        number[]
+      >((recentPokemonIds, pokemonId) => [...recentPokemonIds.filter((recentId) => recentId !== pokemonId), pokemonId].slice(-RECENT_GAME_POKEMON_WINDOW), []);
   } catch {
     return [];
   }
@@ -487,10 +533,16 @@ function CapturedPokemonCollection({
 }) {
   const [pokemonIndex, setPokemonIndex] = useState<PokemonIndexEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [selectedPokemonId, setSelectedPokemonId] = useState<number | null>(null);
-  const [selectedPokemon, setSelectedPokemon] = useState<PokemonDetail | null>(null);
+  const [selectedPokemonId, setSelectedPokemonId] = useState<number | null>(
+    null,
+  );
+  const [selectedPokemon, setSelectedPokemon] = useState<PokemonDetail | null>(
+    null,
+  );
   const [evolutionStages, setEvolutionStages] = useState<string[]>([]);
-  const [detailState, setDetailState] = useState<"idle" | "loading" | "error">("idle");
+  const [detailState, setDetailState] = useState<"idle" | "loading" | "error">(
+    "idle",
+  );
 
   useEffect(() => {
     const controller = new AbortController();
@@ -506,7 +558,9 @@ function CapturedPokemonCollection({
           throw new Error("Unable to load the Pokedex.");
         }
 
-        const data = (await response.json()) as { results: PokemonIndexEntry[] };
+        const data = (await response.json()) as {
+          results: PokemonIndexEntry[];
+        };
         setPokemonIndex(data.results);
       } catch (error) {
         if (!(error instanceof DOMException && error.name === "AbortError")) {
@@ -618,14 +672,22 @@ function CapturedPokemonCollection({
               {capturedPokemonIds.size} of {GAME_POKEMON_COUNT} Pokémon caught
             </p>
           </div>
-          <button aria-label="Close captured Pokemon" onClick={onClose} type="button">
+          <button
+            aria-label="Close captured Pokemon"
+            onClick={onClose}
+            type="button"
+          >
             ×
           </button>
         </header>
 
-        {isLoading ? <p className="collection-loading">Loading the Pokédex…</p> : null}
+        {isLoading ? (
+          <p className="collection-loading">Loading the Pokédex…</p>
+        ) : null}
         {!isLoading && pokemonIndex.length === 0 ? (
-          <p className="collection-loading">The Pokédex could not be loaded. Try again shortly.</p>
+          <p className="collection-loading">
+            The Pokédex could not be loaded. Try again shortly.
+          </p>
         ) : null}
         {pokemonIndex.length > 0 ? (
           <ol className="collection-grid">
@@ -636,7 +698,13 @@ function CapturedPokemonCollection({
 
               return (
                 <li
-                  className={isCaptured ? (isShinyCaptured ? "is-captured is-shiny" : "is-captured") : "is-unknown"}
+                  className={
+                    isCaptured
+                      ? isShinyCaptured
+                        ? "is-captured is-shiny"
+                        : "is-captured"
+                      : "is-unknown"
+                  }
                   key={pokemon.url}
                 >
                   <button
@@ -652,12 +720,20 @@ function CapturedPokemonCollection({
                           : "Unknown Pokemon silhouette"
                       }
                       loading="lazy"
-                      src={isShinyCaptured ? getShinySpriteUrl(pokemonId) : getSpriteUrl(pokemonId)}
+                      src={
+                        isShinyCaptured
+                          ? getShinySpriteUrl(pokemonId)
+                          : getSpriteUrl(pokemonId)
+                      }
                     />
-                    <span className="collection-number">#{String(pokemonId).padStart(3, "0")}</span>
+                    <span className="collection-number">
+                      #{String(pokemonId).padStart(3, "0")}
+                    </span>
                     <strong>
                       {isCaptured ? formatPokemonName(pokemon.name) : "???"}
-                      {isShinyCaptured ? <em aria-label="Shiny captured"> ✦</em> : null}
+                      {isShinyCaptured ? (
+                        <em aria-label="Shiny captured"> ✦</em>
+                      ) : null}
                     </strong>
                   </button>
                 </li>
@@ -691,22 +767,42 @@ function CapturedPokemonCollection({
                     }
                   />
                   <div>
-                    <p>Pokédex #{String(selectedPokemon.id).padStart(3, "0")}</p>
+                    <p>
+                      Pokédex #{String(selectedPokemon.id).padStart(3, "0")}
+                    </p>
                     <h3>{formatPokemonName(selectedPokemon.name)}</h3>
                   </div>
                 </header>
                 <dl className="pokemon-detail-facts">
                   <div>
                     <dt>Type</dt>
-                    <dd>{selectedPokemon.types
-                      .slice()
-                      .sort((left, right) => left.slot - right.slot)
-                      .map((type) => formatPokemonName(type.type.name))
-                      .join(" / ")}</dd>
+                    <dd>
+                      {selectedPokemon.types
+                        .slice()
+                        .sort((left, right) => left.slot - right.slot)
+                        .map((type) => formatPokemonName(type.type.name))
+                        .join(" / ")}
+                    </dd>
                   </div>
-                  <div><dt>Height</dt><dd>{(selectedPokemon.height / 10).toFixed(1)} m</dd></div>
-                  <div><dt>Weight</dt><dd>{(selectedPokemon.weight / 10).toFixed(1)} kg</dd></div>
-                  <div><dt>Abilities</dt><dd>{selectedPokemon.abilities.map((ability) => `${formatPokemonName(ability.ability.name)}${ability.is_hidden ? " (Hidden)" : ""}`).join(", ")}</dd></div>
+                  <div>
+                    <dt>Height</dt>
+                    <dd>{(selectedPokemon.height / 10).toFixed(1)} m</dd>
+                  </div>
+                  <div>
+                    <dt>Weight</dt>
+                    <dd>{(selectedPokemon.weight / 10).toFixed(1)} kg</dd>
+                  </div>
+                  <div>
+                    <dt>Abilities</dt>
+                    <dd>
+                      {selectedPokemon.abilities
+                        .map(
+                          (ability) =>
+                            `${formatPokemonName(ability.ability.name)}${ability.is_hidden ? " (Hidden)" : ""}`,
+                        )
+                        .join(", ")}
+                    </dd>
+                  </div>
                 </dl>
                 <div className="pokemon-detail-section">
                   <h4>Evolution chain</h4>
@@ -716,11 +812,17 @@ function CapturedPokemonCollection({
                   <h4>Moves</h4>
                   <ul className="pokemon-detail-moves">
                     {selectedPokemon.moves.slice(0, 12).map((move) => (
-                      <li key={move.move.name}>{formatPokemonName(move.move.name)}</li>
+                      <li key={move.move.name}>
+                        {formatPokemonName(move.move.name)}
+                      </li>
                     ))}
                   </ul>
                 </div>
-                <button className="hint-button" onClick={() => onChooseCompanion(selectedPokemon.id)} type="button">
+                <button
+                  className="hint-button"
+                  onClick={() => onChooseCompanion(selectedPokemon.id)}
+                  type="button"
+                >
                   Choose {formatPokemonName(selectedPokemon.name)} as companion
                 </button>
               </>
@@ -781,9 +883,13 @@ function drawSkinPattern(
 
   const { height, width } = canvas;
   const patternKinds = ["Flower", "Lightning", "Flame", "Math"] as const;
-  const seed = [...skin.id].reduce((total, character) => total * 31 + character.charCodeAt(0), 17);
+  const seed = [...skin.id].reduce(
+    (total, character) => total * 31 + character.charCodeAt(0),
+    17,
+  );
   const patternKind = patternKinds[Math.abs(seed) % patternKinds.length];
-  const animatedPhase = phase * (0.72 + (Math.abs(seed) % 11) * 0.065) + seed * 0.019;
+  const animatedPhase =
+    phase * (0.72 + (Math.abs(seed) % 11) * 0.065) + seed * 0.019;
   context.clearRect(0, 0, width, height);
   context.lineWidth = 11;
   context.lineCap = "round";
@@ -791,7 +897,9 @@ function drawSkinPattern(
   if (patternKind === "Flower") {
     for (let x = 48; x < width; x += 112) {
       for (let y = 44; y < height; y += 112) {
-        const wobble = Math.sin(animatedPhase * 2 + x * 0.02 + y * 0.02) * (5 + Math.abs(seed % 5));
+        const wobble =
+          Math.sin(animatedPhase * 2 + x * 0.02 + y * 0.02) *
+          (5 + Math.abs(seed % 5));
         context.save();
         context.translate(x + wobble, y);
         context.fillStyle = "hsl(48 100% 68%)";
@@ -823,25 +931,62 @@ function drawSkinPattern(
     }
   } else if (patternKind === "Flame") {
     for (let x = -20; x < width + 40; x += 58) {
-      const heightOffset = 30 + Math.sin(animatedPhase * 3 + x * 0.05) * (13 + Math.abs(seed % 14));
+      const heightOffset =
+        30 +
+        Math.sin(animatedPhase * 3 + x * 0.05) * (13 + Math.abs(seed % 14));
       context.fillStyle = "hsl(42 100% 57%)";
       context.beginPath();
       context.moveTo(x, height + 8);
-      context.bezierCurveTo(x - 26, height - heightOffset, x + 7, height - heightOffset * 2.9, x + 20, height - 96);
-      context.bezierCurveTo(x + 51, height - heightOffset * 1.8, x + 36, height - 25, x + 48, height + 8);
+      context.bezierCurveTo(
+        x - 26,
+        height - heightOffset,
+        x + 7,
+        height - heightOffset * 2.9,
+        x + 20,
+        height - 96,
+      );
+      context.bezierCurveTo(
+        x + 51,
+        height - heightOffset * 1.8,
+        x + 36,
+        height - 25,
+        x + 48,
+        height + 8,
+      );
       context.fill();
       context.fillStyle = "hsl(7 92% 50%)";
       context.beginPath();
       context.moveTo(x + 13, height + 8);
-      context.bezierCurveTo(x, height - 18, x + 24, height - 68, x + 28, height - 78);
-      context.bezierCurveTo(x + 44, height - 43, x + 30, height - 22, x + 39, height + 8);
+      context.bezierCurveTo(
+        x,
+        height - 18,
+        x + 24,
+        height - 68,
+        x + 28,
+        height - 78,
+      );
+      context.bezierCurveTo(
+        x + 44,
+        height - 43,
+        x + 30,
+        height - 22,
+        x + 39,
+        height + 8,
+      );
       context.fill();
     }
   } else {
     context.strokeStyle = `hsl(${(skin.hue + 72) % 360} 92% 68%)`;
     for (let radius = 28; radius < width; radius += 34) {
       context.beginPath();
-      context.arc(width / 2, height / 2, radius + Math.sin(animatedPhase * 2 + radius) * (3 + Math.abs(seed % 7)), 0, Math.PI * 2);
+      context.arc(
+        width / 2,
+        height / 2,
+        radius +
+          Math.sin(animatedPhase * 2 + radius) * (3 + Math.abs(seed % 7)),
+        0,
+        Math.PI * 2,
+      );
       context.stroke();
     }
     for (let x = 0; x < width; x += 38) {
@@ -886,18 +1031,26 @@ function getRandomGamePokemonId(
     (pokemonId) => !recentPokemonIdSet.has(pokemonId),
   );
   const uncaughtPokemonIds = capturedPokemonIds
-    ? eligiblePokemonIds.filter((pokemonId) => !capturedPokemonIds.has(pokemonId))
+    ? eligiblePokemonIds.filter(
+        (pokemonId) => !capturedPokemonIds.has(pokemonId),
+      )
     : [];
   const allUncaughtPokemonIds = capturedPokemonIds
-    ? selectedPokemonIds.filter((pokemonId) => !capturedPokemonIds.has(pokemonId))
+    ? selectedPokemonIds.filter(
+        (pokemonId) => !capturedPokemonIds.has(pokemonId),
+      )
     : [];
 
   // This fallback keeps the selector safe if the game pool is ever smaller
   // than the recent-round window.
   const pokemonIds =
-    uncaughtPokemonIds.length > 0 ? uncaughtPokemonIds : allUncaughtPokemonIds.length > 0 ? allUncaughtPokemonIds : eligiblePokemonIds.length > 0
-      ? eligiblePokemonIds
-      : selectedPokemonIds;
+    uncaughtPokemonIds.length > 0
+      ? uncaughtPokemonIds
+      : allUncaughtPokemonIds.length > 0
+        ? allUncaughtPokemonIds
+        : eligiblePokemonIds.length > 0
+          ? eligiblePokemonIds
+          : selectedPokemonIds;
 
   return pokemonIds[Math.floor(Math.random() * pokemonIds.length)];
 }
@@ -906,8 +1059,10 @@ function rememberGamePokemonId(
   recentPokemonIds: readonly number[],
   pokemonId: number,
 ) {
-  return [...recentPokemonIds.filter((recentId) => recentId !== pokemonId), pokemonId]
-    .slice(-RECENT_GAME_POKEMON_WINDOW);
+  return [
+    ...recentPokemonIds.filter((recentId) => recentId !== pokemonId),
+    pokemonId,
+  ].slice(-RECENT_GAME_POKEMON_WINDOW);
 }
 
 function isEveningLocally() {
@@ -1125,7 +1280,7 @@ const VOICE_NAME_ALIASES: Record<string, string> = {
   "nidoran m": "nidoranm",
   electrobuzz: "electabuzz",
   "om a night": "omanyte",
-  "feraligato": "feraligatr",
+  feraligato: "feraligatr",
   lydian: "ledian",
 };
 
@@ -1138,11 +1293,16 @@ function normalizeVoicePokemonName(name: string) {
     .trim()
     .replace(/\s+/g, " ");
 
-  return normalizePokemonName(VOICE_NAME_ALIASES[normalizedWords] ?? normalizedWords);
+  return normalizePokemonName(
+    VOICE_NAME_ALIASES[normalizedWords] ?? normalizedWords,
+  );
 }
 
 function levenshteinDistance(left: string, right: string) {
-  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  const previous = Array.from(
+    { length: right.length + 1 },
+    (_, index) => index,
+  );
 
   for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
     let diagonal = previous[0];
@@ -1174,12 +1334,22 @@ function findVoicePokemonMatch(
   const phrases = new Set<string>([normalizedTranscript]);
 
   for (let start = 0; start < transcriptWords.length; start += 1) {
-    for (let end = start + 1; end <= Math.min(transcriptWords.length, start + 4); end += 1) {
-      phrases.add(normalizeVoicePokemonName(transcriptWords.slice(start, end).join(" ")));
+    for (
+      let end = start + 1;
+      end <= Math.min(transcriptWords.length, start + 4);
+      end += 1
+    ) {
+      phrases.add(
+        normalizeVoicePokemonName(transcriptWords.slice(start, end).join(" ")),
+      );
     }
   }
 
-  let bestMatch: { candidate: VoicePokemonCandidate; distance: number; phrase: string } | null = null;
+  let bestMatch: {
+    candidate: VoicePokemonCandidate;
+    distance: number;
+    phrase: string;
+  } | null = null;
 
   for (const candidate of candidates) {
     const normalizedCandidate = normalizePokemonName(candidate.name);
@@ -1375,15 +1545,35 @@ function createScreenGradientTexture(typeNames: string[]) {
     context.fillStyle = isGrass ? "#488f3f" : primary[1];
     context.fillRect(0, horizon, canvas.width, 28);
     context.fillStyle = isGrass ? "#236b32" : primary[2];
-    context.fillRect(0, horizon + 28, canvas.width, canvas.height - horizon - 28);
+    context.fillRect(
+      0,
+      horizon + 28,
+      canvas.width,
+      canvas.height - horizon - 28,
+    );
 
     if (isGrass) {
       const tree = (x: number, y: number, size: number) => {
         context.fillStyle = "#5b3a26";
-        context.fillRect(x + size * 0.43, y + size * 0.56, size * 0.16, size * 0.44);
+        context.fillRect(
+          x + size * 0.43,
+          y + size * 0.56,
+          size * 0.16,
+          size * 0.44,
+        );
         context.fillStyle = "#1c5830";
-        context.fillRect(x + size * 0.12, y + size * 0.3, size * 0.76, size * 0.28);
-        context.fillRect(x + size * 0.24, y + size * 0.12, size * 0.52, size * 0.26);
+        context.fillRect(
+          x + size * 0.12,
+          y + size * 0.3,
+          size * 0.76,
+          size * 0.28,
+        );
+        context.fillRect(
+          x + size * 0.24,
+          y + size * 0.12,
+          size * 0.52,
+          size * 0.26,
+        );
         context.fillStyle = "#3c9a45";
         context.fillRect(x + size * 0.28, y, size * 0.38, size * 0.22);
       };
@@ -1440,7 +1630,9 @@ function PokemonSprite({
   spriteUrl: string;
 }) {
   const [isLoaded, setIsLoaded] = useState(false);
-  const [failedAnimatedUrl, setFailedAnimatedUrl] = useState<string | null>(null);
+  const [failedAnimatedUrl, setFailedAnimatedUrl] = useState<string | null>(
+    null,
+  );
   const displayUrl =
     failedAnimatedUrl === animatedSpriteUrl ? spriteUrl : animatedSpriteUrl;
 
@@ -1554,12 +1746,21 @@ function ShinySilhouetteIndicator() {
   return (
     <group ref={sparklesRef} position={[0, 0, 0.02]}>
       {[
-        [-0.29, 0.2], [0.29, 0.16], [-0.25, -0.2], [0.25, -0.18],
-        [0, 0.27], [0, -0.27],
+        [-0.29, 0.2],
+        [0.29, 0.16],
+        [-0.25, -0.2],
+        [0.25, -0.18],
+        [0, 0.27],
+        [0, -0.27],
       ].map(([x, y], index) => (
         <mesh key={index} position={[x, y, 0]} rotation={[0, 0, Math.PI / 4]}>
           <planeGeometry args={[0.045, 0.045]} />
-          <meshBasicMaterial color="#fff1a0" toneMapped={false} transparent opacity={0.95} />
+          <meshBasicMaterial
+            color="#fff1a0"
+            toneMapped={false}
+            transparent
+            opacity={0.95}
+          />
         </mesh>
       ))}
       <pointLight color="#ffe47a" distance={0.7} intensity={1.2} />
@@ -1601,7 +1802,11 @@ function DPadControls({ onStep }: { onStep: (delta: -1 | 1) => void }) {
       {dPadSegments.map((segment, index) => (
         <mesh
           key={segment.name}
-          position={[0, 0, index * 0.001 - (pressedSegment === segment.name ? 0.035 : 0)]}
+          position={[
+            0,
+            0,
+            index * 0.001 - (pressedSegment === segment.name ? 0.035 : 0),
+          ]}
           rotation={[0, 0, segment.rotation]}
           onClick={(event) => {
             event.stopPropagation();
@@ -1700,7 +1905,11 @@ function Snowfall() {
     flakes.forEach((flake, index) => {
       flake.y -= delta * flake.speed;
       if (flake.y < -3.55) flake.y = 5.4 + (index % 9) * 0.15;
-      dummy.position.set(flake.x + Math.sin(flake.y * 2 + index) * 0.08, flake.y, flake.z);
+      dummy.position.set(
+        flake.x + Math.sin(flake.y * 2 + index) * 0.08,
+        flake.y,
+        flake.z,
+      );
       dummy.scale.setScalar(0.65 + (index % 4) * 0.12);
       dummy.updateMatrix();
       meshRef.current?.setMatrixAt(index, dummy.matrix);
@@ -1718,12 +1927,13 @@ function Snowfall() {
 
 function MoonlitSky() {
   const stars = useMemo(
-    () => Array.from({ length: 34 }, (_, index) => ({
-      x: -6.8 + ((index * 37) % 136) / 10,
-      y: 0.4 + ((index * 29) % 42) / 10,
-      z: -13.5 + (index % 6) * 0.22,
-      size: 0.012 + (index % 4) * 0.007,
-    })),
+    () =>
+      Array.from({ length: 34 }, (_, index) => ({
+        x: -6.8 + ((index * 37) % 136) / 10,
+        y: 0.4 + ((index * 29) % 42) / 10,
+        z: -13.5 + (index % 6) * 0.22,
+        size: 0.012 + (index % 4) * 0.007,
+      })),
     [],
   );
   return (
@@ -1743,40 +1953,163 @@ function MoonlitSky() {
   );
 }
 
+// A single meandering ribbon of the aurora "river" — a plane bent into a
+// gentle S-curve (like a river seen from below) with a horizontal gradient
+// texture that continuously scrolls to read as flowing light rather than a
+// static curtain.
+function AuroraRiverBand({
+  amplitude,
+  baseColor,
+  length,
+  midColor,
+  opacity = 0.45,
+  speed,
+  tipColor,
+  width,
+  yOffset,
+  zOffset,
+}: {
+  amplitude: number;
+  baseColor: string;
+  length: number;
+  midColor: string;
+  opacity?: number;
+  speed: number;
+  tipColor: string;
+  width: number;
+  yOffset: number;
+  zOffset: number;
+}) {
+  const geometry = useMemo(() => {
+    const geo = new PlaneGeometry(length, width, 48, 1);
+    const position = geo.attributes.position;
+    for (let i = 0; i < position.count; i++) {
+      const x = position.getX(i);
+      const wave = Math.sin((x / length) * Math.PI * 2.4) * amplitude;
+      position.setY(i, position.getY(i) + wave);
+      position.setZ(
+        i,
+        Math.cos((x / length) * Math.PI * 1.6) * amplitude * 0.6,
+      );
+    }
+    position.needsUpdate = true;
+    geo.computeVertexNormals();
+    return geo;
+  }, [amplitude, length, width]);
+
+  const texture = useMemo(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 256;
+    canvas.height = 32;
+    const context = canvas.getContext("2d");
+    if (!context) return null;
+    const gradient = context.createLinearGradient(0, 0, canvas.width, 0);
+    gradient.addColorStop(0, "transparent");
+    gradient.addColorStop(0.14, baseColor);
+    gradient.addColorStop(0.5, midColor);
+    gradient.addColorStop(0.86, tipColor);
+    gradient.addColorStop(1, "transparent");
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    const map = new CanvasTexture(canvas);
+    map.wrapS = RepeatWrapping;
+    map.wrapT = ClampToEdgeWrapping;
+    map.colorSpace = SRGBColorSpace;
+    map.needsUpdate = true;
+    return map;
+  }, [baseColor, midColor, tipColor]);
+
+  useFrame((_, delta) => {
+    if (texture) texture.offset.x -= delta * speed;
+  });
+
+  return (
+    <mesh geometry={geometry} position={[0, yOffset, zOffset]}>
+      {texture ? (
+        <meshBasicMaterial
+          blending={AdditiveBlending}
+          depthWrite={false}
+          map={texture}
+          opacity={opacity}
+          side={DoubleSide}
+          toneMapped={false}
+          transparent
+        />
+      ) : (
+        <meshBasicMaterial
+          color={midColor}
+          depthWrite={false}
+          side={DoubleSide}
+          toneMapped={false}
+          transparent
+          opacity={0.3}
+        />
+      )}
+    </mesh>
+  );
+}
+
+// Several overlapping river bands, gently scrolling in opposite directions,
+// make one braided "river of light" rather than a single flat streak.
 function Aurora() {
-  const auroraRef = useRef<Group>(null);
+  const groupRef = useRef<Group>(null);
   useFrame(({ clock }) => {
-    if (!auroraRef.current) return;
+    if (!groupRef.current) return;
     const time = clock.getElapsedTime();
-    auroraRef.current.rotation.z = Math.sin(time * 0.22) * 0.11;
-    auroraRef.current.children.forEach((curtain, index) => {
-      curtain.position.x = -3.4 + index * 1.15 + Math.sin(time * 0.7 + index * 0.9) * 0.28;
-      curtain.position.y = Math.sin(time * 0.9 + index * 1.4) * 0.38;
-      curtain.scale.y = 1.55 + Math.sin(time * 1.1 + index) * 0.38;
-    });
+    groupRef.current.rotation.z = Math.sin(time * 0.1) * 0.05;
+    groupRef.current.position.y = 4.6 + Math.sin(time * 0.15) * 0.25;
   });
   return (
-    <group ref={auroraRef} position={[0, 4.6, -18]} scale={[2.25, 2.4, 1]}>
-      {[
-        [-3.4, "#66f7d2"], [-2.3, "#70a7ff"], [-1.1, "#f58bd9"], [0, "#b58cff"], [1.2, "#66f7d2"], [2.4, "#70a7ff"], [3.5, "#f58bd9"],
-      ].map(([x, color], index) => (
-        <mesh key={`${String(color)}-${index}`} position={[Number(x), Math.sin(index * 1.8) * 0.28, -index * 0.12]} rotation={[0.12, 0, index % 2 ? -0.12 : 0.12]} scale={[0.5, 2.1 + (index % 3) * 0.28, 1]}>
-          <planeGeometry args={[0.72, 1]} />
-          <meshBasicMaterial color={String(color)} transparent opacity={0.22} toneMapped={false} />
-        </mesh>
-      ))}
+    <group position={[0, 6.5, -32]} ref={groupRef} rotation={[0.08, 0, 0]}>
+      <AuroraRiverBand
+        amplitude={2.4}
+        baseColor="#0ee79a"
+        length={72}
+        midColor="#2f9dff"
+        opacity={0.4}
+        speed={0.1}
+        tipColor="#a855f7"
+        width={5.5}
+        yOffset={1.4}
+        zOffset={0}
+      />
+      <AuroraRiverBand
+        amplitude={3}
+        baseColor="#22c9d6"
+        length={80}
+        midColor="#e0439b"
+        opacity={0.32}
+        speed={-0.08}
+        tipColor="#12b881"
+        width={4}
+        yOffset={-1.8}
+        zOffset={-6}
+      />
+      <AuroraRiverBand
+        amplitude={1.9}
+        baseColor="#8b4fe0"
+        length={64}
+        midColor="#12c98f"
+        opacity={0.32}
+        speed={0.14}
+        tipColor="#2f9dff"
+        width={3}
+        yOffset={3.8}
+        zOffset={5}
+      />
     </group>
   );
 }
 
 function Fireflies() {
   const fireflies = useMemo(
-    () => Array.from({ length: 24 }, (_, index) => ({
-      x: -6 + ((index * 31) % 120) / 10,
-      y: -2.3 + ((index * 17) % 34) / 10,
-      z: -6.4 - ((index * 43) % 72) / 10,
-      phase: index * 0.73,
-    })),
+    () =>
+      Array.from({ length: 24 }, (_, index) => ({
+        x: -6 + ((index * 31) % 120) / 10,
+        y: -2.3 + ((index * 17) % 34) / 10,
+        z: -6.4 - ((index * 43) % 72) / 10,
+        phase: index * 0.73,
+      })),
     [],
   );
 
@@ -1789,12 +2122,26 @@ function Fireflies() {
   );
 }
 
-function Firefly({ x, y, z, phase }: { x: number; y: number; z: number; phase: number }) {
+function Firefly({
+  x,
+  y,
+  z,
+  phase,
+}: {
+  x: number;
+  y: number;
+  z: number;
+  phase: number;
+}) {
   const fireflyRef = useRef<Mesh>(null);
   useFrame(({ clock }) => {
     if (!fireflyRef.current) return;
     const time = clock.getElapsedTime() + phase;
-    fireflyRef.current.position.set(x + Math.sin(time * 0.8) * 0.16, y + Math.cos(time * 1.1) * 0.13, z);
+    fireflyRef.current.position.set(
+      x + Math.sin(time * 0.8) * 0.16,
+      y + Math.cos(time * 1.1) * 0.13,
+      z,
+    );
     fireflyRef.current.scale.setScalar(0.65 + (Math.sin(time * 3) + 1) * 0.22);
   });
 
@@ -1817,16 +2164,19 @@ function LavaVolcano({
 }) {
   const volcanoRef = useRef<Group>(null);
   const embers = useMemo(
-    () => Array.from({ length: 18 }, (_, index) => ({
-      angle: index * 2.399,
-      phase: phase + index * 0.41,
-      radius: 0.16 + (index % 5) * 0.075,
-    })),
+    () =>
+      Array.from({ length: 18 }, (_, index) => ({
+        angle: index * 2.399,
+        phase: phase + index * 0.41,
+        radius: 0.16 + (index % 5) * 0.075,
+      })),
     [phase],
   );
 
   useFrame(({ clock }) => {
-    if (volcanoRef.current) volcanoRef.current.rotation.y = Math.sin(clock.getElapsedTime() * 0.12 + phase) * 0.08;
+    if (volcanoRef.current)
+      volcanoRef.current.rotation.y =
+        Math.sin(clock.getElapsedTime() * 0.12 + phase) * 0.08;
   });
 
   return (
@@ -1840,26 +2190,296 @@ function LavaVolcano({
         <meshBasicMaterial color="#ff5a1f" toneMapped={false} />
       </mesh>
       {[-0.52, -0.2, 0.18, 0.48].map((x, index) => (
-        <mesh key={x} position={[x, 0.25 - index * 0.16, 0.75]} rotation={[-1.02, 0, 0]} scale={[0.13, 1.05 - index * 0.12, 1]}>
+        <mesh
+          key={x}
+          position={[x, 0.25 - index * 0.16, 0.75]}
+          rotation={[-1.02, 0, 0]}
+          scale={[0.13, 1.05 - index * 0.12, 1]}
+        >
           <planeGeometry args={[1, 1]} />
-          <meshBasicMaterial color={index % 2 ? "#ff7c24" : "#ffcc40"} transparent opacity={0.9} toneMapped={false} />
+          <meshBasicMaterial
+            color={index % 2 ? "#ff7c24" : "#ffcc40"}
+            transparent
+            opacity={0.9}
+            toneMapped={false}
+          />
         </mesh>
       ))}
-      {embers.map((ember, index) => <LavaEmber key={index} {...ember} />)}
+      {embers.map((ember, index) => (
+        <LavaEmber key={index} {...ember} />
+      ))}
     </group>
   );
 }
 
-function LavaEmber({ angle, phase, radius }: { angle: number; phase: number; radius: number }) {
+function LavaEmber({
+  angle,
+  phase,
+  radius,
+}: {
+  angle: number;
+  phase: number;
+  radius: number;
+}) {
   const emberRef = useRef<Mesh>(null);
   useFrame(({ clock }) => {
     if (!emberRef.current) return;
     const time = clock.getElapsedTime() + phase;
     const distance = radius + (Math.sin(time * 1.8) + 1) * 0.3;
-    emberRef.current.position.set(Math.cos(angle + time * 0.45) * distance, 1.2 + Math.abs(Math.sin(time * 1.4)) * 1.55, Math.sin(angle + time * 0.45) * distance);
-    emberRef.current.scale.setScalar(0.45 + Math.abs(Math.sin(time * 2.4)) * 0.5);
+    emberRef.current.position.set(
+      Math.cos(angle + time * 0.45) * distance,
+      1.2 + Math.abs(Math.sin(time * 1.4)) * 1.55,
+      Math.sin(angle + time * 0.45) * distance,
+    );
+    emberRef.current.scale.setScalar(
+      0.45 + Math.abs(Math.sin(time * 2.4)) * 0.5,
+    );
   });
-  return <mesh ref={emberRef}><sphereGeometry args={[0.045, 6, 5]} /><meshBasicMaterial color="#ffca4d" toneMapped={false} /></mesh>;
+  return (
+    <mesh ref={emberRef}>
+      <sphereGeometry args={[0.045, 6, 5]} />
+      <meshBasicMaterial color="#ffca4d" toneMapped={false} />
+    </mesh>
+  );
+}
+
+// A tiny deterministic string hash so each Pokémon gets its own stable
+// "roll of the dice" for terrain variety — the same Pikachu always looks the
+// same, but Pikachu's meadow differs from Bulbasaur's.
+function hashSeed(input: string): number {
+  let hash = 0;
+  for (let i = 0; i < input.length; i++) {
+    hash = (hash * 31 + input.charCodeAt(i)) >>> 0;
+  }
+  return hash;
+}
+
+const FLOWER_FIELD_COLORS = [
+  "#f2d96b",
+  "#f49bb3",
+  "#d8d0ff",
+  "#f7a45c",
+] as const;
+
+// Deterministic 0..1 pseudo-random from a number, used to scatter flower
+// patches organically instead of along a mechanical ring or grid.
+function pseudoRandom(n: number): number {
+  const x = Math.sin(n * 12.9898) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+// Loose, irregular patches of flat "paint dab" flowers scattered across the
+// meadow — a few dense clusters with bare ground between them, the way a
+// real field of wildflowers grows, rather than an even ring or grid.
+function FlowerField({ seed }: { seed: number }) {
+  const petalRef = useRef<InstancedMesh>(null);
+  const centerRef = useRef<InstancedMesh>(null);
+  const dummy = useMemo(() => new Object3D(), []);
+  const flowers = useMemo(() => {
+    const clusterCount = 30;
+    const scattered: Array<{
+      colorIndex: number;
+      rotation: number;
+      scale: number;
+      x: number;
+      z: number;
+    }> = [];
+    for (let cluster = 0; cluster < clusterCount; cluster++) {
+      const clusterBase = (cluster + seed) * 11;
+      const offsetX = (pseudoRandom(clusterBase + 0.17) * 2 - 1) * 16;
+      const offsetZ = (pseudoRandom(clusterBase + 0.53) * 2 - 1) * 14 - 2;
+      if (Math.hypot(offsetX, offsetZ) < 3.6) continue; // keep the Pokedex's podium clear
+      const centerX = VIEWER_ORBIT_TARGET[0] + offsetX;
+      const centerZ = VIEWER_ORBIT_TARGET[2] + offsetZ;
+      const clusterSize = 4 + Math.floor(pseudoRandom(clusterBase + 0.81) * 6);
+      for (let flower = 0; flower < clusterSize; flower++) {
+        const flowerBase = clusterBase + flower * 3.7;
+        const angle = pseudoRandom(flowerBase + 0.31) * Math.PI * 2;
+        const spread = pseudoRandom(flowerBase + 0.62) * 1.05;
+        scattered.push({
+          colorIndex: Math.floor(
+            pseudoRandom(flowerBase + 0.12) * FLOWER_FIELD_COLORS.length,
+          ),
+          rotation: pseudoRandom(flowerBase + 0.44) * Math.PI * 2,
+          scale: 0.5 + pseudoRandom(flowerBase + 0.9) * 0.75,
+          x: centerX + Math.cos(angle) * spread,
+          z: centerZ + Math.sin(angle) * spread,
+        });
+      }
+    }
+    return scattered;
+  }, [seed]);
+
+  useEffect(() => {
+    if (!petalRef.current || !centerRef.current) return;
+    flowers.forEach((flower, index) => {
+      dummy.position.set(flower.x, -3.7, flower.z);
+      dummy.rotation.set(-Math.PI / 2, 0, flower.rotation);
+      dummy.scale.setScalar(flower.scale);
+      dummy.updateMatrix();
+      petalRef.current?.setMatrixAt(index, dummy.matrix);
+      petalRef.current?.setColorAt(
+        index,
+        new Color(FLOWER_FIELD_COLORS[flower.colorIndex]),
+      );
+
+      dummy.scale.setScalar(flower.scale * 0.4);
+      dummy.position.set(flower.x, -3.695, flower.z);
+      dummy.updateMatrix();
+      centerRef.current?.setMatrixAt(index, dummy.matrix);
+    });
+    petalRef.current.instanceMatrix.needsUpdate = true;
+    centerRef.current.instanceMatrix.needsUpdate = true;
+    if (petalRef.current.instanceColor)
+      petalRef.current.instanceColor.needsUpdate = true;
+  }, [dummy, flowers]);
+
+  if (flowers.length === 0) return null;
+
+  return (
+    <>
+      <instancedMesh
+        args={[undefined, undefined, flowers.length]}
+        ref={petalRef}
+      >
+        <circleGeometry args={[0.09, 6]} />
+        <meshStandardMaterial roughness={0.85} />
+      </instancedMesh>
+      <instancedMesh
+        args={[undefined, undefined, flowers.length]}
+        ref={centerRef}
+      >
+        <circleGeometry args={[0.09, 6]} />
+        <meshStandardMaterial color="#3f7d3a" roughness={0.9} />
+      </instancedMesh>
+    </>
+  );
+}
+
+// A handful of extra boulders whose count and placement come straight from
+// the per-Pokémon terrain seed, so the ground never looks quite the same
+// twice even within one type/biome.
+function ScatteredBoulders({ seed }: { seed: number }) {
+  const boulderCount = 6 + (seed % 9);
+  const boulders = useMemo(
+    () =>
+      Array.from({ length: boulderCount }, (_, index) => {
+        const boulderSeed = index + seed;
+        const angle = (boulderSeed * 2.399) % (Math.PI * 2);
+        const radius = 5 + ((boulderSeed * 7) % 13);
+        return {
+          rotation: (boulderSeed * 0.37) % (Math.PI * 2),
+          scale: 0.16 + ((boulderSeed * 11) % 10) / 32,
+          x: VIEWER_ORBIT_TARGET[0] + Math.cos(angle) * radius,
+          z: VIEWER_ORBIT_TARGET[2] + Math.sin(angle) * radius,
+        };
+      }),
+    [boulderCount, seed],
+  );
+  return (
+    <>
+      {boulders.map((boulder, index) => (
+        <mesh
+          key={index}
+          position={[boulder.x, -3.5, boulder.z]}
+          rotation={[0, boulder.rotation, 0]}
+          scale={boulder.scale}
+        >
+          <dodecahedronGeometry args={[1, 0]} />
+          <meshStandardMaterial
+            color={index % 2 ? "#5c6a5f" : "#6f7d70"}
+            flatShading
+            roughness={1}
+          />
+        </mesh>
+      ))}
+    </>
+  );
+}
+
+// Simple flapping V-shaped silhouettes circling high overhead, purely for
+// atmosphere — most biomes get a little life in the sky.
+function Birds({ tint }: { tint: string }) {
+  const flockRef = useRef<Group>(null);
+  const birds = useMemo(
+    () =>
+      Array.from({ length: 5 }, (_, index) => ({
+        phase: index * 1.3,
+        radius: 9 + index * 1.6,
+        speed: 0.16 + (index % 3) * 0.05,
+        y: 5.4 + (index % 3) * 0.6,
+      })),
+    [],
+  );
+  useFrame(({ clock }) => {
+    if (!flockRef.current) return;
+    const time = clock.getElapsedTime();
+    flockRef.current.children.forEach((bird, index) => {
+      const spec = birds[index];
+      const angle = time * spec.speed + spec.phase;
+      bird.position.set(
+        Math.cos(angle) * spec.radius,
+        spec.y + Math.sin(time * 2 + spec.phase) * 0.08,
+        Math.sin(angle) * spec.radius - 6,
+      );
+      bird.rotation.y = -angle - Math.PI / 2;
+      bird.scale.y = 1 + Math.sin(time * 6 + spec.phase) * 0.35;
+    });
+  });
+  return (
+    <group ref={flockRef}>
+      {birds.map((_, index) => (
+        <mesh key={index}>
+          <coneGeometry args={[0.09, 0.03, 3]} />
+          <meshBasicMaterial color={tint} toneMapped={false} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+// Small fluttering wing-pairs drifting low over the flower fields.
+function Butterflies({ count = 6 }: { count?: number }) {
+  const swarmRef = useRef<Group>(null);
+  const butterflies = useMemo(
+    () =>
+      Array.from({ length: count }, (_, index) => ({
+        color: FLOWER_FIELD_COLORS[index % FLOWER_FIELD_COLORS.length],
+        phase: index * 0.87,
+        radius: 3 + (index % 4) * 1.4,
+        x: -6 + ((index * 41) % 130) / 10,
+        z: -6 - ((index * 29) % 90) / 10,
+      })),
+    [count],
+  );
+  useFrame(({ clock }) => {
+    if (!swarmRef.current) return;
+    const time = clock.getElapsedTime();
+    swarmRef.current.children.forEach((butterfly, index) => {
+      const spec = butterflies[index];
+      const angle = time * 0.5 + spec.phase;
+      butterfly.position.set(
+        spec.x + Math.cos(angle) * spec.radius * 0.3,
+        -3.1 + Math.sin(time * 1.4 + spec.phase) * 0.14,
+        spec.z + Math.sin(angle) * spec.radius * 0.3,
+      );
+      butterfly.scale.x = 0.7 + Math.abs(Math.sin(time * 9 + spec.phase)) * 0.5;
+    });
+  });
+  return (
+    <group ref={swarmRef}>
+      {butterflies.map((butterfly, index) => (
+        <mesh key={index} rotation={[0, 0, 0]}>
+          <planeGeometry args={[0.12, 0.08]} />
+          <meshBasicMaterial
+            color={butterfly.color}
+            side={DoubleSide}
+            toneMapped={false}
+          />
+        </mesh>
+      ))}
+    </group>
+  );
 }
 
 function WindblownGrass({
@@ -1873,26 +2493,42 @@ function WindblownGrass({
 }) {
   const grassRef = useRef<Group>(null);
   const blades = useMemo(
-    () => Array.from({ length: 24 }, (_, index) => ({
-      x: ((index * 23 + seed * 11) % 100) / 100 - 0.5,
-      z: ((index * 37 + seed * 7) % 100) / 100 - 0.5,
-      height: 0.22 + ((index * 17 + seed) % 13) / 34,
-      phase: index * 0.48 + seed,
-    })),
+    () =>
+      Array.from({ length: 24 }, (_, index) => ({
+        x: ((index * 23 + seed * 11) % 100) / 100 - 0.5,
+        z: ((index * 37 + seed * 7) % 100) / 100 - 0.5,
+        height: 0.22 + ((index * 17 + seed) % 13) / 34,
+        phase: index * 0.48 + seed,
+      })),
     [seed],
   );
 
   useFrame(({ clock }) => {
     if (!grassRef.current) return;
-    grassRef.current.rotation.z = Math.sin(clock.getElapsedTime() * 0.72 + seed) * 0.055;
+    grassRef.current.rotation.z =
+      Math.sin(clock.getElapsedTime() * 0.72 + seed) * 0.055;
   });
 
   return (
     <group ref={grassRef} position={position} scale={scale}>
       {blades.map((blade, index) => (
-        <mesh key={index} position={[blade.x, blade.height / 2, blade.z]} rotation={[0, 0, Math.sin(blade.phase) * 0.12]}>
+        <mesh
+          key={index}
+          position={[blade.x, blade.height / 2, blade.z]}
+          rotation={[0, 0, Math.sin(blade.phase) * 0.12]}
+        >
           <planeGeometry args={[0.032, blade.height]} />
-          <meshStandardMaterial color={index % 3 === 0 ? "#78a94e" : index % 3 === 1 ? "#4f873f" : "#9abb57"} side={DoubleSide} roughness={1} />
+          <meshStandardMaterial
+            color={
+              index % 3 === 0
+                ? "#78a94e"
+                : index % 3 === 1
+                  ? "#4f873f"
+                  : "#9abb57"
+            }
+            side={DoubleSide}
+            roughness={1}
+          />
         </mesh>
       ))}
     </group>
@@ -1913,19 +2549,27 @@ function LandscapeTree({
 
   useFrame(({ clock }) => {
     if (treeRef.current) {
-      treeRef.current.rotation.z = Math.sin(clock.getElapsedTime() * 0.65 + phase) * 0.022;
+      treeRef.current.rotation.z =
+        Math.sin(clock.getElapsedTime() * 0.65 + phase) * 0.022;
     }
   });
 
   return (
-    <group ref={treeRef} position={[position[0], -2.68, position[1]]} scale={position[2]}>
+    <group
+      ref={treeRef}
+      position={[position[0], -2.68, position[1]]}
+      scale={position[2]}
+    >
       <mesh position={[0, -0.55, 0]}>
         <cylinderGeometry args={[0.13, 0.18, 1.3, 6]} />
         <meshStandardMaterial color="#65412a" roughness={1} />
       </mesh>
       <mesh position={[0, 0.25, 0]}>
         <coneGeometry args={[0.8, 1.8, 7]} />
-        <meshStandardMaterial color={index % 2 === 0 ? foliage : "#4d9750"} roughness={0.9} />
+        <meshStandardMaterial
+          color={index % 2 === 0 ? foliage : "#4d9750"}
+          roughness={0.9}
+        />
       </mesh>
       <mesh position={[0.12, 0.83, -0.04]} scale={[0.72, 0.72, 0.72]}>
         <coneGeometry args={[0.8, 1.8, 7]} />
@@ -1933,6 +2577,1287 @@ function LandscapeTree({
       </mesh>
     </group>
   );
+}
+
+// A distant, more transparent, more desaturated ring of peaks well beyond
+// `surroundingMountains` — the classic atmospheric-perspective trick that
+// makes far background scenery read as farther away, and the layer that
+// guarantees every type gets a mountainous horizon no matter which way the
+// player orbits the Pokedex.
+function GreatMountainRing({
+  isVolcanicBiome,
+  snowCapped,
+}: {
+  isVolcanicBiome: boolean;
+  snowCapped: boolean;
+}) {
+  const peakCount = 26;
+  const peaks = Array.from({ length: peakCount }, (_, index) => {
+    const angle = (index / peakCount) * Math.PI * 2 + 0.05;
+    const radius = 58 + (index % 4) * 4.5;
+    const scale = 7.5 + ((index * 9) % 6) * 1.1;
+    return [
+      VIEWER_ORBIT_TARGET[0] + Math.cos(angle) * radius,
+      VIEWER_ORBIT_TARGET[2] + Math.sin(angle) * radius,
+      scale,
+    ] as const;
+  });
+  return (
+    <>
+      {peaks.map(([x, z, scale], index) => (
+        <mesh
+          key={`great-mountain-${index}`}
+          position={[x, -1.1, z]}
+          scale={[scale * 1.3, scale * 0.62, scale]}
+        >
+          <coneGeometry args={[1, 1.8, 6]} />
+          <meshStandardMaterial
+            color={
+              snowCapped
+                ? "#c9dee7"
+                : isVolcanicBiome
+                  ? "#241d21"
+                  : index % 2
+                    ? "#7f95a6"
+                    : "#8fa3b2"
+            }
+            flatShading
+            roughness={1}
+            transparent
+            opacity={0.42}
+            depthWrite={false}
+          />
+        </mesh>
+      ))}
+    </>
+  );
+}
+
+// A slow-drifting ring of low-poly cloud puffs high above the terrain.
+// Because the whole ring rotates independently of (and much slower than) the
+// player's orbit, it reads as a genuine parallax layer rather than a static
+// backdrop.
+function ParallaxClouds({ tint }: { tint: string }) {
+  const groupRef = useRef<Group>(null);
+  const clouds = useMemo(
+    () =>
+      Array.from({ length: 10 }, (_, index) => {
+        const angle = (index / 10) * Math.PI * 2;
+        const radius = 26 + (index % 3) * 6;
+        return {
+          x: Math.cos(angle) * radius,
+          y: 6.5 + (index % 4) * 0.9,
+          z: Math.sin(angle) * radius,
+          scale: 1.6 + (index % 5) * 0.5,
+          phase: index * 0.9,
+        };
+      }),
+    [],
+  );
+
+  useFrame(({ clock }, delta) => {
+    if (!groupRef.current) return;
+    groupRef.current.rotation.y += delta * 0.006;
+    groupRef.current.children.forEach((cloud, index) => {
+      cloud.position.y =
+        clouds[index].y +
+        Math.sin(clock.getElapsedTime() * 0.15 + clouds[index].phase) * 0.15;
+    });
+  });
+
+  return (
+    <group
+      ref={groupRef}
+      position={[VIEWER_ORBIT_TARGET[0], 0, VIEWER_ORBIT_TARGET[2]]}
+    >
+      {clouds.map((cloud, index) => (
+        <group
+          key={`cloud-${index}`}
+          position={[cloud.x, cloud.y, cloud.z]}
+          scale={cloud.scale}
+        >
+          <mesh>
+            <sphereGeometry args={[0.9, 7, 5]} />
+            <meshBasicMaterial
+              color={tint}
+              transparent
+              opacity={0.55}
+              toneMapped={false}
+            />
+          </mesh>
+          <mesh position={[0.85, -0.1, 0.1]} scale={0.7}>
+            <sphereGeometry args={[0.9, 7, 5]} />
+            <meshBasicMaterial
+              color={tint}
+              transparent
+              opacity={0.5}
+              toneMapped={false}
+            />
+          </mesh>
+          <mesh position={[-0.8, -0.05, -0.15]} scale={0.75}>
+            <sphereGeometry args={[0.9, 7, 5]} />
+            <meshBasicMaterial
+              color={tint}
+              transparent
+              opacity={0.5}
+              toneMapped={false}
+            />
+          </mesh>
+        </group>
+      ))}
+    </group>
+  );
+}
+
+// Drifting translucent bands used as toxic smog over Poison-type terrain —
+// the same layered-plane trick as `horizonMountainRange`, but animated and
+// tinted sickly green/purple.
+function SmogHaze() {
+  const groupRef = useRef<Group>(null);
+  useFrame(({ clock }) => {
+    if (!groupRef.current) return;
+    const time = clock.getElapsedTime();
+    groupRef.current.children.forEach((band, index) => {
+      band.position.x = Math.sin(time * 0.12 + index * 1.3) * 1.4;
+    });
+  });
+  return (
+    <group
+      ref={groupRef}
+      position={[VIEWER_ORBIT_TARGET[0], 0.4, VIEWER_ORBIT_TARGET[2] - 14]}
+    >
+      {[0, 1, 2, 3].map((index) => (
+        <mesh
+          key={index}
+          position={[0, index * 0.7, -index * 2.4]}
+          scale={[16 + index * 3, 1.8, 1]}
+        >
+          <planeGeometry args={[1, 1]} />
+          <meshBasicMaterial
+            color={index % 2 ? "#8a6bb0" : "#6e9a52"}
+            transparent
+            opacity={0.16}
+            depthWrite={false}
+            toneMapped={false}
+          />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+// ---- City skyline biomes: Electric, Steel, Poison, Fighting ----
+// These four types trade the natural tree ring for a ring of lit buildings,
+// following the same "small props, seeded variation, radial placement"
+// idiom used everywhere else in this file (LandscapeTree, LavaVolcano).
+const CITY_PALETTES = {
+  electric: {
+    bodies: ["#455361", "#38434f", "#526270"],
+    window: "#fff2a8",
+    windowDim: "#7c8894",
+    glow: "#ffe066",
+    accent: "#fff09a",
+    rooftop: ["antenna", "beacon", "vent"] as const,
+  },
+  steel: {
+    bodies: ["#5b6b74", "#48565e", "#6c7d86"],
+    window: "#d8eef5",
+    windowDim: "#7c8b91",
+    glow: "#a8dcec",
+    accent: "#e7eef1",
+    rooftop: ["antenna", "tank", "beacon"] as const,
+  },
+  poison: {
+    bodies: ["#473a54", "#382d44", "#584862"],
+    window: "#b8f28c",
+    windowDim: "#665a76",
+    glow: "#8fe36a",
+    accent: "#c084e0",
+    rooftop: ["vent", "tank", "antenna"] as const,
+  },
+  fighting: {
+    bodies: ["#6b4a3a", "#59392c", "#7a5540"],
+    window: "#ffb15c",
+    windowDim: "#8a6a52",
+    glow: "#ff9a3c",
+    accent: "#e0995a",
+    rooftop: ["tank", "vent", "antenna"] as const,
+  },
+} as const;
+type CityPalette = (typeof CITY_PALETTES)[keyof typeof CITY_PALETTES];
+type RooftopFixture = CityPalette["rooftop"][number];
+
+function createWindowGridTexture(
+  seed: number,
+  palette: Pick<CityPalette, "window" | "windowDim">,
+) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 48;
+  canvas.height = 96;
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+
+  const cols = 4;
+  const rows = 9;
+  const cellWidth = canvas.width / cols;
+  const cellHeight = canvas.height / rows;
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      const lit = (seed * 131 + row * 17 + col * 41) % 100 < 40;
+      context.globalAlpha = lit ? 0.95 : 0.3;
+      context.fillStyle = lit ? palette.window : palette.windowDim;
+      context.fillRect(
+        col * cellWidth + cellWidth * 0.16,
+        row * cellHeight + cellHeight * 0.2,
+        cellWidth * 0.68,
+        cellHeight * 0.6,
+      );
+    }
+  }
+  context.globalAlpha = 1;
+
+  const texture = new CanvasTexture(canvas);
+  texture.colorSpace = SRGBColorSpace;
+  texture.magFilter = LinearFilter;
+  texture.minFilter = LinearFilter;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+function CityBuilding({
+  height,
+  palette,
+  position,
+  rooftop,
+  seed,
+  width,
+}: {
+  height: number;
+  palette: CityPalette;
+  position: readonly [number, number];
+  rooftop: RooftopFixture;
+  seed: number;
+  width: number;
+}) {
+  const depth = width * (0.72 + (seed % 3) * 0.12);
+  const windowTexture = useMemo(
+    () => createWindowGridTexture(seed, palette),
+    [seed, palette],
+  );
+  const bodyColor = palette.bodies[seed % palette.bodies.length];
+  const beaconRef = useRef<Mesh>(null);
+
+  useFrame(({ clock }) => {
+    if (!beaconRef.current) return;
+    const material = beaconRef.current.material as MeshStandardMaterial;
+    material.emissiveIntensity =
+      0.5 + (0.5 + 0.5 * Math.sin(clock.getElapsedTime() * 2.6 + seed)) * 0.9;
+  });
+
+  return (
+    <group
+      position={[position[0], -3.72, position[1]]}
+      rotation={[0, seed * 0.7, 0]}
+    >
+      <mesh castShadow receiveShadow position={[0, height / 2, 0]}>
+        <boxGeometry args={[width, height, depth]} />
+        <meshStandardMaterial
+          color={bodyColor}
+          roughness={0.85}
+          metalness={0.12}
+        />
+      </mesh>
+      {windowTexture ? (
+        <>
+          <mesh position={[0, height / 2, depth / 2 + 0.01]}>
+            <planeGeometry args={[width * 0.88, height * 0.9]} />
+            <meshStandardMaterial
+              map={windowTexture}
+              emissive={palette.glow}
+              emissiveMap={windowTexture}
+              emissiveIntensity={0.6}
+              transparent
+              roughness={0.55}
+            />
+          </mesh>
+          <mesh
+            position={[0, height / 2, -depth / 2 - 0.01]}
+            rotation={[0, Math.PI, 0]}
+          >
+            <planeGeometry args={[width * 0.88, height * 0.9]} />
+            <meshStandardMaterial
+              map={windowTexture}
+              emissive={palette.glow}
+              emissiveMap={windowTexture}
+              emissiveIntensity={0.6}
+              transparent
+              roughness={0.55}
+            />
+          </mesh>
+        </>
+      ) : null}
+      {rooftop === "antenna" ? (
+        <mesh position={[width * 0.18, height + 0.35, 0]}>
+          <cylinderGeometry args={[0.02, 0.02, 0.7, 4]} />
+          <meshStandardMaterial color="#2b2f33" roughness={0.8} />
+        </mesh>
+      ) : null}
+      {rooftop === "tank" ? (
+        <mesh position={[-width * 0.22, height + 0.2, 0]}>
+          <cylinderGeometry args={[0.16, 0.16, 0.36, 8]} />
+          <meshStandardMaterial color="#8a6a52" roughness={1} />
+        </mesh>
+      ) : null}
+      {rooftop === "beacon" ? (
+        <mesh ref={beaconRef} position={[0, height + 0.1, 0]}>
+          <sphereGeometry args={[0.07, 6, 6]} />
+          <meshStandardMaterial
+            color={palette.accent}
+            emissive={palette.accent}
+            emissiveIntensity={0.7}
+            toneMapped={false}
+          />
+        </mesh>
+      ) : null}
+      {rooftop === "vent" ? (
+        <mesh position={[-width * 0.2, height + 0.12, depth * 0.15]}>
+          <boxGeometry args={[0.22, 0.24, 0.22]} />
+          <meshStandardMaterial color="#3a3f44" roughness={0.9} />
+        </mesh>
+      ) : null}
+    </group>
+  );
+}
+
+// The 360° ring of mid-height buildings that takes over from
+// `surroundingTrees` for city-skyline types.
+function CitySkylineRing({ palette }: { palette: CityPalette }) {
+  const count = 22;
+  const buildings = Array.from({ length: count }, (_, index) => {
+    const angle = (index / count) * Math.PI * 2 + 0.2;
+    const radius = 19 + (index % 4) * 1.7;
+    return {
+      height: 2.4 + ((index * 11) % 9) * 0.55,
+      position: [
+        VIEWER_ORBIT_TARGET[0] + Math.cos(angle) * radius,
+        VIEWER_ORBIT_TARGET[2] + Math.sin(angle) * radius,
+      ] as const,
+      rooftop: palette.rooftop[index % palette.rooftop.length],
+      seed: index,
+      width: 1.2 + ((index * 5) % 4) * 0.32,
+    };
+  });
+  return (
+    <>
+      {buildings.map((building) => (
+        <CityBuilding
+          height={building.height}
+          key={`city-building-${building.position[0]}-${building.position[1]}`}
+          palette={palette}
+          position={building.position}
+          rooftop={building.rooftop}
+          seed={building.seed}
+          width={building.width}
+        />
+      ))}
+    </>
+  );
+}
+
+// A cluster of larger foreground towers, replacing the cottage set-piece for
+// city-skyline types.
+function CityHeroBlock({ palette }: { palette: CityPalette }) {
+  const towers: ReadonlyArray<readonly [number, number, number, number]> = [
+    [-3.9, -11.4, 3.6, 1.55],
+    [-1.35, -12.6, 4.9, 1.35],
+    [1.2, -11.1, 3.2, 1.7],
+    [3.6, -12.9, 4.3, 1.4],
+  ];
+  return (
+    <>
+      {towers.map(([x, z, height, width], index) => (
+        <CityBuilding
+          height={height}
+          key={`hero-building-${x}-${z}`}
+          palette={palette}
+          position={[x, z]}
+          rooftop={palette.rooftop[index % palette.rooftop.length]}
+          seed={index + 40}
+          width={width}
+        />
+      ))}
+    </>
+  );
+}
+
+// ---- Signature foreground landmarks for the remaining types ----
+// One hand-built set-piece per type so the terrain reads as *that* type's
+// place, not just its palette. Most share the old cottage's foreground slot
+// (which they replace); Flying and Water get their own placement since one
+// floats and the other sits at the water's edge.
+const FOREGROUND_LANDMARK_TYPES = new Set([
+  "bug",
+  "dragon",
+  "fairy",
+  "flying",
+  "ghost",
+  "ground",
+  "ice",
+  "psychic",
+  "rock",
+  "water",
+]);
+const LANDMARK_SLOT: readonly [number, number, number] = [-3.8, -2.67, -11.2];
+
+// Small drifting glow, generalized from `Firefly` with a configurable color
+// so it can double as pollen, fairy sparkle, or a will-o'-the-wisp.
+function GlowMote({
+  color,
+  phase,
+  position,
+}: {
+  color: string;
+  phase: number;
+  position: readonly [number, number, number];
+}) {
+  const moteRef = useRef<Mesh>(null);
+  useFrame(({ clock }) => {
+    if (!moteRef.current) return;
+    const time = clock.getElapsedTime() + phase;
+    moteRef.current.position.set(
+      position[0] + Math.sin(time * 0.7) * 0.14,
+      position[1] + Math.sin(time * 1.3) * 0.16,
+      position[2] + Math.cos(time * 0.7) * 0.14,
+    );
+    moteRef.current.scale.setScalar(0.6 + (Math.sin(time * 2.6) + 1) * 0.25);
+  });
+  return (
+    <mesh ref={moteRef} position={position}>
+      <sphereGeometry args={[0.045, 6, 5]} />
+      <meshBasicMaterial color={color} toneMapped={false} />
+    </mesh>
+  );
+}
+
+function BugHiveMound({ isNightBiome }: { isNightBiome: boolean }) {
+  const motes = useMemo(
+    () =>
+      Array.from({ length: 8 }, (_, index) => ({
+        color: isNightBiome ? "#d7ff8a" : "#f2e37a",
+        phase: index * 0.7,
+        position: [
+          -1 + ((index * 37) % 20) / 10,
+          0.3 + ((index * 23) % 12) / 10,
+          -0.3 + ((index * 29) % 10) / 10,
+        ] as const,
+      })),
+    [isNightBiome],
+  );
+  return (
+    <group position={LANDMARK_SLOT} rotation={[0, 0.34, 0]}>
+      <mesh castShadow receiveShadow scale={[1.55, 0.9, 1.35]}>
+        <dodecahedronGeometry args={[1, 1]} />
+        <meshStandardMaterial color="#8a6a3a" flatShading roughness={1} />
+      </mesh>
+      <mesh position={[1.15, -0.32, 0.55]} scale={[0.85, 0.55, 0.75]}>
+        <dodecahedronGeometry args={[1, 1]} />
+        <meshStandardMaterial color="#7a5c30" flatShading roughness={1} />
+      </mesh>
+      {[0, 1, 2].map((row) => (
+        <mesh
+          key={row}
+          position={[-0.45 + row * 0.42, -0.1 + row * 0.28, 0.85]}
+        >
+          <circleGeometry args={[0.13 - row * 0.015, 8]} />
+          <meshBasicMaterial color="#241a10" />
+        </mesh>
+      ))}
+      {motes.map((mote, index) => (
+        <GlowMote
+          color={mote.color}
+          key={index}
+          phase={mote.phase}
+          position={mote.position}
+        />
+      ))}
+    </group>
+  );
+}
+
+function DragonRuins() {
+  const pillars: ReadonlyArray<readonly [number, number, number]> = [
+    [-1.6, 1.35, 0],
+    [-0.7, 1.6, -0.09],
+    [0.5, 1.1, 0.12],
+    [1.5, 1.5, -0.06],
+  ];
+  return (
+    <group position={LANDMARK_SLOT} rotation={[0, 0.34, 0]}>
+      {pillars.map(([x, height, tilt], index) => (
+        <mesh
+          castShadow
+          receiveShadow
+          key={index}
+          position={[x, height / 2, 0]}
+          rotation={[0, 0, tilt]}
+        >
+          <cylinderGeometry args={[0.22, 0.28, height, 6]} />
+          <meshStandardMaterial
+            color={index % 2 ? "#4a4054" : "#5a4f66"}
+            flatShading
+            roughness={1}
+          />
+        </mesh>
+      ))}
+      <mesh position={[-0.1, 1.9, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[0.85, 0.11, 8, 16, Math.PI]} />
+        <meshStandardMaterial color="#eef0e6" roughness={0.7} />
+      </mesh>
+      <GlowMote color="#b58cff" phase={0} position={[-0.4, 1.4, 0.6]} />
+      <GlowMote color="#66f7d2" phase={1.6} position={[0.6, 1.1, 0.4]} />
+    </group>
+  );
+}
+
+function FairyRing() {
+  const toadstools = useMemo(
+    () =>
+      Array.from({ length: 7 }, (_, index) => {
+        const angle = (index / 7) * Math.PI * 2;
+        return {
+          color: index % 2 ? "#f49bb3" : "#f2d96b",
+          x: Math.cos(angle) * 0.95,
+          z: Math.sin(angle) * 0.95,
+        };
+      }),
+    [],
+  );
+  const sparkles = useMemo(
+    () =>
+      Array.from({ length: 9 }, (_, index) => ({
+        color:
+          index % 3 === 0 ? "#f8d9ff" : index % 3 === 1 ? "#fff2b0" : "#c8f7e6",
+        phase: index * 0.55,
+        position: [
+          -1.1 + ((index * 41) % 22) / 10,
+          0.3 + ((index * 19) % 14) / 10,
+          -0.5 + ((index * 31) % 10) / 10,
+        ] as const,
+      })),
+    [],
+  );
+  return (
+    <group position={LANDMARK_SLOT} rotation={[0, 0.34, 0]}>
+      {toadstools.map((mushroom, index) => (
+        <group key={index} position={[mushroom.x, 0, mushroom.z]}>
+          <mesh position={[0, 0.14, 0]}>
+            <cylinderGeometry args={[0.035, 0.05, 0.28, 5]} />
+            <meshStandardMaterial color="#f2ead6" roughness={0.9} />
+          </mesh>
+          <mesh position={[0, 0.3, 0]}>
+            <sphereGeometry
+              args={[0.12, 6, 5, 0, Math.PI * 2, 0, Math.PI / 2]}
+            />
+            <meshStandardMaterial color={mushroom.color} roughness={0.75} />
+          </mesh>
+        </group>
+      ))}
+      <mesh position={[0, 0.55, 0]}>
+        <octahedronGeometry args={[0.22, 0]} />
+        <meshStandardMaterial
+          color="#ffd9ec"
+          emissive="#ff9ad1"
+          emissiveIntensity={0.45}
+          roughness={0.4}
+        />
+      </mesh>
+      {sparkles.map((sparkle, index) => (
+        <GlowMote
+          color={sparkle.color}
+          key={index}
+          phase={sparkle.phase}
+          position={sparkle.position}
+        />
+      ))}
+    </group>
+  );
+}
+
+function FlyingIslands() {
+  const islandsRef = useRef<Group>(null);
+  const islandSpecs: ReadonlyArray<readonly [number, number, number]> = [
+    [0, 1.6, 1.35],
+    [3.4, 0.9, 0.95],
+  ];
+  useFrame(({ clock }) => {
+    if (!islandsRef.current) return;
+    const time = clock.getElapsedTime();
+    islandsRef.current.children.forEach((island, index) => {
+      island.position.y =
+        islandSpecs[index][1] + Math.sin(time * 0.4 + index * 1.7) * 0.18;
+    });
+  });
+  return (
+    <group position={[-1.5, 0, -14]} ref={islandsRef}>
+      {islandSpecs.map(([x, y, scale], index) => (
+        <group key={index} position={[x, y, 0]} scale={scale}>
+          <mesh castShadow receiveShadow rotation={[Math.PI, 0, 0]}>
+            <coneGeometry args={[1.1, 0.9, 7]} />
+            <meshStandardMaterial color="#6e8a55" flatShading roughness={1} />
+          </mesh>
+          <mesh position={[0, 0.42, 0]}>
+            <cylinderGeometry args={[1.1, 1.15, 0.32, 7]} />
+            <meshStandardMaterial
+              color="#4d8c58"
+              flatShading
+              roughness={0.95}
+            />
+          </mesh>
+          {[-0.5, 0.1, 0.55].map((offset) => (
+            <mesh key={offset} position={[offset, -0.55, 0]}>
+              <cylinderGeometry args={[0.02, 0.015, 0.85, 4]} />
+              <meshStandardMaterial color="#3f6b48" roughness={1} />
+            </mesh>
+          ))}
+        </group>
+      ))}
+    </group>
+  );
+}
+
+function GhostGraveyard() {
+  const graves: ReadonlyArray<readonly [number, number, number]> = [
+    [-1.3, 0.55, 0.6],
+    [-0.5, 0.65, -0.9],
+    [0.35, 0.5, 0.75],
+    [1.2, 0.6, -0.45],
+  ];
+  const wisps = useMemo(
+    () =>
+      Array.from({ length: 5 }, (_, index) => ({
+        color: "#8fe3d8",
+        phase: index * 0.9,
+        position: [
+          -1 + ((index * 43) % 20) / 10,
+          0.4 + ((index * 21) % 10) / 10,
+          -0.2 + ((index * 33) % 8) / 10,
+        ] as const,
+      })),
+    [],
+  );
+  return (
+    <group position={LANDMARK_SLOT} rotation={[0, 0.34, 0]}>
+      <mesh position={[0, -0.42, 0.3]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[3.6, 2.4]} />
+        <meshBasicMaterial
+          color="#c6d9ff"
+          transparent
+          opacity={0.16}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
+      {graves.map(([x, height, tilt], index) => (
+        <mesh
+          castShadow
+          receiveShadow
+          key={index}
+          position={[x, height / 2, 0]}
+          rotation={[0, 0, tilt * 0.3]}
+        >
+          <boxGeometry args={[0.4, height, 0.1]} />
+          <meshStandardMaterial color="#565f68" roughness={1} />
+        </mesh>
+      ))}
+      <mesh position={[1.9, 0.75, -0.5]}>
+        <cylinderGeometry args={[0.08, 0.14, 1.5, 5]} />
+        <meshStandardMaterial color="#332b30" roughness={1} />
+      </mesh>
+      {[-0.3, 0.25].map((offset) => (
+        <mesh
+          key={offset}
+          position={[1.9 + offset, 1.5, -0.5]}
+          rotation={[0, 0, offset > 0 ? -0.6 : 0.6]}
+        >
+          <cylinderGeometry args={[0.03, 0.05, 0.7, 4]} />
+          <meshStandardMaterial color="#332b30" roughness={1} />
+        </mesh>
+      ))}
+      {wisps.map((wisp, index) => (
+        <GlowMote
+          color={wisp.color}
+          key={index}
+          phase={wisp.phase}
+          position={wisp.position}
+        />
+      ))}
+    </group>
+  );
+}
+
+function GroundCanyon() {
+  const strata = ["#c8a56e", "#b3875a", "#c8a56e", "#a8794c"];
+  return (
+    <group position={LANDMARK_SLOT} rotation={[0, 0.34, 0]}>
+      {strata.map((color, index) => (
+        <mesh
+          castShadow
+          receiveShadow
+          key={color + index}
+          position={[0, 0.35 + index * 0.42, 0]}
+          scale={[1.8 - index * 0.18, 1, 1.3 - index * 0.12]}
+        >
+          <boxGeometry args={[1, 0.42, 1]} />
+          <meshStandardMaterial color={color} flatShading roughness={1} />
+        </mesh>
+      ))}
+      <group position={[1.6, -0.2, 0.6]}>
+        <mesh position={[0, 0.35, 0]}>
+          <cylinderGeometry args={[0.14, 0.18, 0.7, 8]} />
+          <meshStandardMaterial color="#4f7c3f" roughness={0.95} />
+        </mesh>
+        {[0.25, -0.25].map((offset) => (
+          <mesh
+            key={offset}
+            position={[offset * 0.6, 0.45, 0]}
+            rotation={[0, 0, offset > 0 ? -0.9 : 0.9]}
+          >
+            <cylinderGeometry args={[0.06, 0.08, 0.32, 6]} />
+            <meshStandardMaterial color="#4f7c3f" roughness={0.95} />
+          </mesh>
+        ))}
+      </group>
+      <mesh position={[-1.4, -0.55, 0.7]} rotation={[0, 0.4, 1.4]}>
+        <cylinderGeometry args={[0.04, 0.05, 0.55, 5]} />
+        <meshStandardMaterial color="#e8e0cf" roughness={0.9} />
+      </mesh>
+    </group>
+  );
+}
+
+function IceGlacier() {
+  const shards: ReadonlyArray<readonly [number, number, number]> = [
+    [-1.1, 1.1, 0.12],
+    [-0.4, 1.5, -0.15],
+    [0.4, 0.85, 0.2],
+    [1.1, 1.3, -0.1],
+  ];
+  return (
+    <group position={LANDMARK_SLOT} rotation={[0, 0.34, 0]}>
+      <mesh position={[0.1, -0.55, 0.35]} rotation={[-Math.PI / 2, 0, 0]}>
+        <circleGeometry args={[1.7, 16]} />
+        <meshStandardMaterial
+          color="#d3eef5"
+          roughness={0.15}
+          metalness={0.25}
+        />
+      </mesh>
+      {shards.map(([x, height, tilt], index) => (
+        <mesh
+          castShadow
+          key={index}
+          position={[x, height / 2 - 0.3, 0]}
+          rotation={[0, 0, tilt]}
+          scale={[0.5, height, 0.5]}
+        >
+          <octahedronGeometry args={[0.6, 0]} />
+          <meshStandardMaterial
+            color="#c9edf5"
+            transparent
+            opacity={0.82}
+            roughness={0.1}
+            metalness={0.15}
+          />
+        </mesh>
+      ))}
+      <mesh position={[-1.5, -0.15, 0.55]} scale={[0.75, 0.55, 0.75]}>
+        <sphereGeometry args={[0.55, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2]} />
+        <meshStandardMaterial color="#eefaff" roughness={0.85} />
+      </mesh>
+    </group>
+  );
+}
+
+function NormalWindmill() {
+  const bladesRef = useRef<Group>(null);
+  useFrame((_, delta) => {
+    if (bladesRef.current) bladesRef.current.rotation.z += delta * 0.7;
+  });
+  return (
+    <group position={LANDMARK_SLOT} rotation={[0, 0.34, 0]}>
+      <mesh castShadow receiveShadow position={[0, 0.9, 0]}>
+        <cylinderGeometry args={[0.32, 0.42, 1.8, 8]} />
+        <meshStandardMaterial color="#d8cdb8" roughness={0.9} />
+      </mesh>
+      <mesh castShadow position={[0, 1.95, 0]} rotation={[0, Math.PI / 4, 0]}>
+        <coneGeometry args={[0.55, 0.6, 4]} />
+        <meshStandardMaterial color="#8a4a3a" roughness={0.95} />
+      </mesh>
+      <group position={[0, 1.7, 0.46]} ref={bladesRef}>
+        {[0, 1, 2, 3].map((index) => (
+          <mesh key={index} rotation={[0, 0, (index * Math.PI) / 2]}>
+            <boxGeometry args={[0.16, 1.15, 0.03]} />
+            <meshStandardMaterial color="#efe6d2" roughness={0.85} />
+          </mesh>
+        ))}
+      </group>
+      <mesh position={[1.4, -0.25, 0.5]} rotation={[0, 0.3, Math.PI / 2]}>
+        <cylinderGeometry args={[0.35, 0.35, 0.75, 10]} />
+        <meshStandardMaterial color="#c9a556" flatShading roughness={1} />
+      </mesh>
+    </group>
+  );
+}
+
+function PsychicMonument() {
+  const shardsRef = useRef<Group>(null);
+  const ringRef = useRef<Mesh>(null);
+  useFrame(({ clock }) => {
+    const time = clock.getElapsedTime();
+    if (shardsRef.current) shardsRef.current.rotation.y = time * 0.3;
+    if (ringRef.current) {
+      const material = ringRef.current.material as MeshStandardMaterial;
+      material.emissiveIntensity = 0.5 + Math.sin(time * 1.4) * 0.3;
+    }
+  });
+  return (
+    <group
+      position={[LANDMARK_SLOT[0], LANDMARK_SLOT[1] + 0.3, LANDMARK_SLOT[2]]}
+      rotation={[0, 0.34, 0]}
+    >
+      <mesh position={[0, 0.2, 0]} ref={ringRef} rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[1, 0.08, 8, 24]} />
+        <meshStandardMaterial
+          color="#c084e0"
+          emissive="#a35fd6"
+          emissiveIntensity={0.6}
+          roughness={0.4}
+          toneMapped={false}
+        />
+      </mesh>
+      <group ref={shardsRef}>
+        {[0, 1, 2, 3].map((index) => {
+          const angle = (index / 4) * Math.PI * 2;
+          return (
+            <mesh
+              key={index}
+              position={[
+                Math.cos(angle) * 1.1,
+                0.6 + Math.sin(index) * 0.2,
+                Math.sin(angle) * 1.1,
+              ]}
+              rotation={[0.4, angle, 0.2]}
+            >
+              <octahedronGeometry args={[0.24, 0]} />
+              <meshStandardMaterial
+                color="#e6b8f2"
+                emissive="#c084e0"
+                emissiveIntensity={0.4}
+                roughness={0.4}
+              />
+            </mesh>
+          );
+        })}
+      </group>
+    </group>
+  );
+}
+
+function RockMonolith() {
+  const stones: ReadonlyArray<readonly [number, number]> = [
+    [-1.3, 1.5],
+    [-0.55, 1.7],
+    [0.4, 1.6],
+    [1.2, 1.45],
+  ];
+  return (
+    <group position={LANDMARK_SLOT} rotation={[0, 0.34, 0]}>
+      {stones.map(([x, height], index) => (
+        <mesh
+          castShadow
+          receiveShadow
+          key={index}
+          position={[x, height / 2, 0]}
+        >
+          <boxGeometry args={[0.32, height, 0.28]} />
+          <meshStandardMaterial
+            color={index % 2 ? "#7a736a" : "#8c847a"}
+            flatShading
+            roughness={1}
+          />
+        </mesh>
+      ))}
+      <mesh position={[-0.55, 1.85, 0]}>
+        <boxGeometry args={[1.9, 0.24, 0.32]} />
+        <meshStandardMaterial color="#736c62" flatShading roughness={1} />
+      </mesh>
+      <mesh position={[1.9, -0.55, 0.6]} scale={0.4}>
+        <dodecahedronGeometry args={[1, 0]} />
+        <meshStandardMaterial color="#65605a" flatShading roughness={1} />
+      </mesh>
+      <mesh position={[2.3, -0.62, 0.3]} scale={0.28}>
+        <dodecahedronGeometry args={[1, 0]} />
+        <meshStandardMaterial color="#5c574f" flatShading roughness={1} />
+      </mesh>
+    </group>
+  );
+}
+
+function WaterDock() {
+  const beamRef = useRef<Group>(null);
+  const gullsRef = useRef<Group>(null);
+  useFrame(({ clock }, delta) => {
+    const time = clock.getElapsedTime();
+    if (beamRef.current) beamRef.current.rotation.y += delta * 0.9;
+    if (gullsRef.current) {
+      gullsRef.current.children.forEach((gull, index) => {
+        const angle = time * 0.5 + index * 2.1;
+        gull.position.set(
+          Math.cos(angle) * 1.6,
+          1.6 + Math.sin(time + index) * 0.15,
+          Math.sin(angle) * 1.6,
+        );
+      });
+    }
+  });
+  return (
+    <group
+      position={[LANDMARK_SLOT[0], -3.65, LANDMARK_SLOT[2]]}
+      rotation={[0, 0.34, 0]}
+    >
+      {[-1.4, -0.7, 0, 0.7, 1.4].map((z) => (
+        <mesh key={z} position={[0, 0.09, z]} receiveShadow>
+          <boxGeometry args={[1.1, 0.06, 0.62]} />
+          <meshStandardMaterial color="#6b4a34" roughness={0.95} />
+        </mesh>
+      ))}
+      {[
+        [-0.45, -1.7],
+        [0.45, -1.7],
+        [-0.45, 1.7],
+        [0.45, 1.7],
+      ].map(([x, z]) => (
+        <mesh key={`${x}-${z}`} position={[x, -0.2, z]}>
+          <cylinderGeometry args={[0.05, 0.06, 0.6, 6]} />
+          <meshStandardMaterial color="#4a3324" roughness={1} />
+        </mesh>
+      ))}
+      <mesh castShadow position={[1.5, 1.05, 1.5]}>
+        <cylinderGeometry args={[0.22, 0.3, 2.1, 8]} />
+        <meshStandardMaterial color="#e8e2d4" roughness={0.85} />
+      </mesh>
+      <mesh position={[1.5, 2.25, 1.5]}>
+        <coneGeometry args={[0.32, 0.4, 8]} />
+        <meshStandardMaterial color="#a13b32" roughness={0.9} />
+      </mesh>
+      <group position={[1.5, 2.05, 1.5]} ref={beamRef}>
+        <mesh rotation={[0, 0, Math.PI / 2]}>
+          <coneGeometry args={[0.5, 3, 12, 1, true]} />
+          <meshBasicMaterial
+            color="#fff6c9"
+            transparent
+            opacity={0.16}
+            depthWrite={false}
+            toneMapped={false}
+            side={DoubleSide}
+          />
+        </mesh>
+      </group>
+      <group ref={gullsRef}>
+        {[0, 1].map((index) => (
+          <mesh key={index}>
+            <coneGeometry args={[0.08, 0.02, 3]} />
+            <meshBasicMaterial color="#f4f2ec" />
+          </mesh>
+        ))}
+      </group>
+    </group>
+  );
+}
+
+function Cottage({
+  bodyColor,
+  lit,
+  position,
+  roofColor,
+  rotationY,
+  scale = 1,
+}: {
+  bodyColor: string;
+  lit: boolean;
+  position: readonly [number, number, number];
+  roofColor: string;
+  rotationY: number;
+  scale?: number;
+}) {
+  return (
+    <group position={position} rotation={[0, rotationY, 0]} scale={scale}>
+      <mesh castShadow receiveShadow>
+        <boxGeometry args={[2.35, 1.45, 1.7]} />
+        <meshStandardMaterial color={bodyColor} roughness={0.92} />
+      </mesh>
+      <mesh castShadow position={[0, 1.04, 0]} rotation={[0, Math.PI / 4, 0]}>
+        <coneGeometry args={[1.7, 1.1, 4]} />
+        <meshStandardMaterial color={roofColor} roughness={0.95} />
+      </mesh>
+      <mesh position={[0, -0.35, 0.87]}>
+        <boxGeometry args={[0.48, 0.76, 0.045]} />
+        <meshStandardMaterial color="#65422d" roughness={0.9} />
+      </mesh>
+      <mesh position={[-0.72, 0.12, 0.88]}>
+        <boxGeometry args={[0.44, 0.42, 0.05]} />
+        <meshStandardMaterial
+          color={lit ? "#ffd47a" : "#7bbbd0"}
+          emissive={lit ? "#d89431" : "#000000"}
+          emissiveIntensity={lit ? 0.8 : 0}
+        />
+      </mesh>
+    </group>
+  );
+}
+
+// What used to be a single cottage is now a little seeded hamlet — a
+// couple of smaller neighboring houses, a well, and two lamp posts that
+// light up at night. `seed` (derived from the current Pokémon) nudges
+// house placement and roof colors so no two visits look identical.
+function Village({
+  habitat,
+  isNightBiome,
+  seed,
+}: {
+  habitat: string;
+  isNightBiome: boolean;
+  seed: number;
+}) {
+  const bodyBase = habitat === "urban" ? "#b5a38c" : "#d4b17b";
+  const roofPalette = ["#9a493c", "#5f7a52", "#5f6f8a", "#8a5f9a"] as const;
+  const houses: ReadonlyArray<{
+    position: readonly [number, number, number];
+    rotationY: number;
+    scale: number;
+  }> = [
+    { position: [-3.8, -2.67, -11.2], rotationY: 0.34, scale: 1 },
+    {
+      position: [-6.35 + (seed % 5) / 10, -2.67, -9.1 - (seed % 4) / 10],
+      rotationY: -0.55,
+      scale: 0.68,
+    },
+    {
+      position: [-0.9 - (seed % 6) / 12, -2.67, -13.6 + (seed % 3) / 10],
+      rotationY: 1.1,
+      scale: 0.58,
+    },
+  ];
+  const lampPosts: ReadonlyArray<readonly [number, number]> = [
+    [-2.35, -8.15],
+    [-2.85, -9.5],
+  ];
+  return (
+    <group>
+      {houses.map((house, index) => (
+        <Cottage
+          bodyColor={
+            index === 0
+              ? bodyBase
+              : roofPalette[(seed + index) % roofPalette.length]
+          }
+          key={index}
+          lit={isNightBiome}
+          position={house.position}
+          roofColor={roofPalette[(seed + index * 2) % roofPalette.length]}
+          rotationY={house.rotationY}
+          scale={house.scale}
+        />
+      ))}
+      <group position={[-1.6, -3.55, -7.9]}>
+        <mesh castShadow receiveShadow>
+          <cylinderGeometry args={[0.32, 0.36, 0.42, 10]} />
+          <meshStandardMaterial color="#7a736a" roughness={1} />
+        </mesh>
+        {[-0.3, 0.3].map((x) => (
+          <mesh key={x} position={[x, 0.65, 0]}>
+            <cylinderGeometry args={[0.025, 0.025, 0.9, 5]} />
+            <meshStandardMaterial color="#5c4632" roughness={0.9} />
+          </mesh>
+        ))}
+        <mesh position={[0, 1.08, 0]} rotation={[Math.PI / 2, 0, 0]}>
+          <cylinderGeometry args={[0.025, 0.025, 0.68, 5]} />
+          <meshStandardMaterial color="#5c4632" roughness={0.9} />
+        </mesh>
+        <mesh position={[0, 0.5, 0]} rotation={[Math.PI / 2, 0, 0]}>
+          <torusGeometry args={[0.05, 0.03, 6, 10]} />
+          <meshStandardMaterial color="#5c4632" roughness={0.9} />
+        </mesh>
+      </group>
+      {lampPosts.map(([x, z], index) => (
+        <group key={index} position={[x, -3.35, z]}>
+          <mesh>
+            <cylinderGeometry args={[0.025, 0.03, 1.1, 6]} />
+            <meshStandardMaterial color="#2b2f33" roughness={0.85} />
+          </mesh>
+          <mesh position={[0, 0.58, 0]}>
+            <sphereGeometry args={[0.08, 8, 6]} />
+            <meshStandardMaterial
+              color="#ffe9a8"
+              emissive="#ffcf5e"
+              emissiveIntensity={isNightBiome ? 1.1 : 0.05}
+              toneMapped={false}
+            />
+          </mesh>
+        </group>
+      ))}
+    </group>
+  );
+}
+
+// A tileable dirt-road texture: mottled speckle noise, two worn wheel ruts,
+// and grass creeping in from both edges — replaces the old flat color plus
+// single bright centerline stripe (which read more like a painted road
+// marking than a country dirt track).
+function createDirtRoadTexture(wet: boolean) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 128;
+  canvas.height = 512;
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+
+  context.fillStyle = wet ? "#6a5d4d" : "#a6835c";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  for (let i = 0; i < 1400; i++) {
+    const x = Math.random() * canvas.width;
+    const y = Math.random() * canvas.height;
+    const size = 1 + Math.random() * 2.5;
+    context.globalAlpha = 0.12 + Math.random() * 0.18;
+    context.fillStyle = Math.random() > 0.5 ? "#3f3122" : "#c9a878";
+    context.fillRect(x, y, size, size);
+  }
+  context.globalAlpha = 1;
+
+  context.fillStyle = wet ? "#453a2d" : "#6f5539";
+  context.globalAlpha = 0.55;
+  context.fillRect(canvas.width * 0.22, 0, canvas.width * 0.1, canvas.height);
+  context.fillRect(canvas.width * 0.68, 0, canvas.width * 0.1, canvas.height);
+  context.globalAlpha = 1;
+
+  context.fillStyle = "#4d7c3f";
+  context.globalAlpha = 0.35;
+  for (let y = 0; y < canvas.height; y += 10) {
+    const growth = 4 + Math.random() * 10;
+    context.fillRect(0, y, growth, 8);
+    context.fillRect(canvas.width - growth, y, growth, 8);
+  }
+  context.globalAlpha = 1;
+
+  if (wet) {
+    context.fillStyle = "#8fa8bd";
+    context.globalAlpha = 0.22;
+    context.fillRect(
+      canvas.width * 0.24,
+      0,
+      canvas.width * 0.06,
+      canvas.height,
+    );
+    context.fillRect(canvas.width * 0.7, 0, canvas.width * 0.06, canvas.height);
+    context.globalAlpha = 1;
+  }
+
+  const texture = new CanvasTexture(canvas);
+  texture.wrapS = RepeatWrapping;
+  texture.wrapT = RepeatWrapping;
+  texture.colorSpace = SRGBColorSpace;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+function DirtRoad({ isWetWeather }: { isWetWeather: boolean }) {
+  const baseTexture = useMemo(
+    () => createDirtRoadTexture(isWetWeather),
+    [isWetWeather],
+  );
+  const primaryTexture = useMemo(() => {
+    if (!baseTexture) return null;
+    const clone = baseTexture.clone();
+    clone.repeat.set(1, 5.5);
+    clone.needsUpdate = true;
+    return clone;
+  }, [baseTexture]);
+  const secondaryTexture = useMemo(() => {
+    if (!baseTexture) return null;
+    const clone = baseTexture.clone();
+    clone.repeat.set(1, 2.4);
+    clone.needsUpdate = true;
+    return clone;
+  }, [baseTexture]);
+  const fallbackColor = isWetWeather ? "#6f6251" : "#a6835c";
+  const roughness = isWetWeather ? 0.42 : 0.96;
+  const metalness = isWetWeather ? 0.12 : 0;
+
+  return (
+    <group>
+      <mesh
+        position={[2.19, -3.695, -2.23]}
+        rotation={[-Math.PI / 2, 0.12, 0]}
+        receiveShadow
+      >
+        <planeGeometry args={[2.45, 22.2]} />
+        <meshStandardMaterial
+          color={primaryTexture ? "#ffffff" : fallbackColor}
+          map={primaryTexture}
+          metalness={metalness}
+          roughness={roughness}
+        />
+      </mesh>
+      <mesh
+        position={[1.25, -3.695, -13.3]}
+        rotation={[-Math.PI / 2, -0.08, 0]}
+        receiveShadow
+      >
+        <planeGeometry args={[2.45, 9.8]} />
+        <meshStandardMaterial
+          color={secondaryTexture ? "#ffffff" : fallbackColor}
+          map={secondaryTexture}
+          metalness={metalness}
+          roughness={roughness}
+        />
+      </mesh>
+    </group>
+  );
+}
+
+function TypeLandmark({
+  isNightBiome,
+  primaryType,
+}: {
+  isNightBiome: boolean;
+  primaryType: string;
+}) {
+  switch (primaryType) {
+    case "bug":
+      return <BugHiveMound isNightBiome={isNightBiome} />;
+    case "dragon":
+      return <DragonRuins />;
+    case "fairy":
+      return <FairyRing />;
+    case "flying":
+      return <FlyingIslands />;
+    case "ghost":
+      return <GhostGraveyard />;
+    case "ground":
+      return <GroundCanyon />;
+    case "ice":
+      return <IceGlacier />;
+    case "normal":
+      return <NormalWindmill />;
+    case "psychic":
+      return <PsychicMonument />;
+    case "rock":
+      return <RockMonolith />;
+    case "water":
+      return <WaterDock />;
+    default:
+      return null;
+  }
 }
 
 const ScanEnvironment = memo(function ScanEnvironment({
@@ -1965,7 +3890,9 @@ const ScanEnvironment = memo(function ScanEnvironment({
           current?: { precipitation?: number; weather_code?: number };
         };
         const code = data.current?.weather_code ?? 0;
-        setIsWetWeather((data.current?.precipitation ?? 0) > 0.05 || code >= 51);
+        setIsWetWeather(
+          (data.current?.precipitation ?? 0) > 0.05 || code >= 51,
+        );
       } catch {
         // The landscape remains clear if the optional weather lookup is unavailable.
       }
@@ -1974,15 +3901,60 @@ const ScanEnvironment = memo(function ScanEnvironment({
     return () => controller.abort();
   }, []);
   const habitatScene = {
-    cave: { ground: "#6f7667", foliage: "#5d744d", water: false, mountains: true },
-    forest: { ground: "#2f6e3c", foliage: "#24653a", water: false, mountains: false },
-    grassland: { ground: "#5da34a", foliage: "#347c3c", water: false, mountains: false },
-    mountain: { ground: "#6d8263", foliage: "#405f45", water: false, mountains: true },
-    rare: { ground: "#568f48", foliage: "#427b4a", water: false, mountains: false },
-    "rough-terrain": { ground: "#6f815a", foliage: "#4d7142", water: false, mountains: true },
-    sea: { ground: "#2e7db0", foliage: "#367d5c", water: true, mountains: false },
-    "waters-edge": { ground: "#d5bd77", foliage: "#467f48", water: true, mountains: false },
-    urban: { ground: "#75838b", foliage: "#5e7968", water: false, mountains: false },
+    cave: {
+      ground: "#6f7667",
+      foliage: "#5d744d",
+      water: false,
+      mountains: true,
+    },
+    forest: {
+      ground: "#2f6e3c",
+      foliage: "#24653a",
+      water: false,
+      mountains: false,
+    },
+    grassland: {
+      ground: "#5da34a",
+      foliage: "#347c3c",
+      water: false,
+      mountains: false,
+    },
+    mountain: {
+      ground: "#6d8263",
+      foliage: "#405f45",
+      water: false,
+      mountains: true,
+    },
+    rare: {
+      ground: "#568f48",
+      foliage: "#427b4a",
+      water: false,
+      mountains: false,
+    },
+    "rough-terrain": {
+      ground: "#6f815a",
+      foliage: "#4d7142",
+      water: false,
+      mountains: true,
+    },
+    sea: {
+      ground: "#2e7db0",
+      foliage: "#367d5c",
+      water: true,
+      mountains: false,
+    },
+    "waters-edge": {
+      ground: "#d5bd77",
+      foliage: "#467f48",
+      water: true,
+      mountains: false,
+    },
+    urban: {
+      ground: "#75838b",
+      foliage: "#5e7968",
+      water: false,
+      mountains: false,
+    },
   }[habitat] ?? {
     ground: "#568f48",
     foliage: "#427b4a",
@@ -1993,85 +3965,334 @@ const ScanEnvironment = memo(function ScanEnvironment({
   // guess. PokeAPI type is deliberately a stronger signal than habitat so an
   // Ice Pokémon never appears in a sunny grassland and Dark stays moonlit.
   const primaryType = typeNames[0] ?? "normal";
+  // A stable per-Pokémon "dice roll" that seeds the randomized extras
+  // (scattered boulders, village layout, flower fields) so the same
+  // Pokémon always looks the same, but different Pokémon don't.
+  const terrainSeed = hashSeed(
+    `${spriteUrl ?? animatedSpriteUrl ?? ""}|${habitat}|${typeNames.join(",")}`,
+  );
   const typeScene = {
-    bug: { ground: "#4d7c32", foliage: "#2f6c37", sky: "#8fc8ec", water: false, mountains: false, snow: false, storm: false, night: false },
-    dark: { ground: "#18251f", foliage: "#172f2a", sky: "#080d21", water: false, mountains: true, snow: false, storm: false, night: true },
-    dragon: { ground: "#584b63", foliage: "#415e53", sky: "#413451", water: false, mountains: true, snow: false, storm: false, night: true },
-    electric: { ground: "#55634c", foliage: "#384f3c", sky: "#2c3750", water: false, mountains: false, snow: false, storm: true, night: false },
-    fairy: { ground: "#8fba81", foliage: "#5d9a62", sky: "#d8b7dc", water: false, mountains: false, snow: false, storm: false, night: false },
-    fighting: { ground: "#9c7147", foliage: "#72623f", sky: "#c98e63", water: false, mountains: true, snow: false, storm: false, night: false },
-    fire: { ground: "#6b4435", foliage: "#744737", sky: "#9a4d44", water: false, mountains: true, snow: false, storm: false, night: false },
-    flying: { ground: "#78ad79", foliage: "#4d8d66", sky: "#84bfe8", water: false, mountains: false, snow: false, storm: false, night: false },
-    ghost: { ground: "#29323f", foliage: "#33415c", sky: "#16152f", water: false, mountains: true, snow: false, storm: false, night: true },
-    grass: { ground: "#2f6e3c", foliage: "#24653a", sky: "#8fc8ec", water: false, mountains: false, snow: false, storm: false, night: false },
-    ground: { ground: "#a48358", foliage: "#786f43", sky: "#d5ad73", water: false, mountains: true, snow: false, storm: false, night: false },
-    ice: { ground: "#d7edf2", foliage: "#7caeb7", sky: "#aecce2", water: false, mountains: true, snow: true, storm: false, night: false },
-    normal: { ground: habitatScene.ground, foliage: habitatScene.foliage, sky: "#8fc8ec", water: habitatScene.water, mountains: habitatScene.mountains, snow: false, storm: false, night: false },
-    poison: { ground: "#5d4a6d", foliage: "#4e5d45", sky: "#76598c", water: false, mountains: false, snow: false, storm: false, night: true },
-    psychic: { ground: "#a96985", foliage: "#825572", sky: "#925a94", water: false, mountains: false, snow: false, storm: false, night: true },
-    rock: { ground: "#786d59", foliage: "#59634c", sky: "#8791a0", water: false, mountains: true, snow: false, storm: false, night: false },
-    steel: { ground: "#61717a", foliage: "#536866", sky: "#7f99aa", water: false, mountains: true, snow: false, storm: false, night: false },
-    water: { ground: "#d5bd77", foliage: "#467f48", sky: "#72bde2", water: true, mountains: false, snow: false, storm: false, night: false },
+    bug: {
+      ground: "#4d7c32",
+      foliage: "#2f6c37",
+      sky: "#8fc8ec",
+      water: false,
+      mountains: false,
+      snow: false,
+      storm: false,
+      night: false,
+    },
+    dark: {
+      ground: "#18251f",
+      foliage: "#172f2a",
+      sky: "#080d21",
+      water: false,
+      mountains: true,
+      snow: false,
+      storm: false,
+      night: true,
+    },
+    dragon: {
+      ground: "#584b63",
+      foliage: "#415e53",
+      sky: "#413451",
+      water: false,
+      mountains: true,
+      snow: false,
+      storm: false,
+      night: true,
+    },
+    electric: {
+      ground: "#55634c",
+      foliage: "#384f3c",
+      sky: "#2c3750",
+      water: false,
+      mountains: false,
+      snow: false,
+      storm: true,
+      night: false,
+    },
+    fairy: {
+      ground: "#8fba81",
+      foliage: "#5d9a62",
+      sky: "#d8b7dc",
+      water: false,
+      mountains: false,
+      snow: false,
+      storm: false,
+      night: false,
+    },
+    fighting: {
+      ground: "#9c7147",
+      foliage: "#72623f",
+      sky: "#c98e63",
+      water: false,
+      mountains: true,
+      snow: false,
+      storm: false,
+      night: false,
+    },
+    fire: {
+      ground: "#6b4435",
+      foliage: "#744737",
+      sky: "#9a4d44",
+      water: false,
+      mountains: true,
+      snow: false,
+      storm: false,
+      night: false,
+    },
+    flying: {
+      ground: "#78ad79",
+      foliage: "#4d8d66",
+      sky: "#84bfe8",
+      water: false,
+      mountains: false,
+      snow: false,
+      storm: false,
+      night: false,
+    },
+    ghost: {
+      ground: "#29323f",
+      foliage: "#33415c",
+      sky: "#16152f",
+      water: false,
+      mountains: true,
+      snow: false,
+      storm: false,
+      night: true,
+    },
+    grass: {
+      ground: "#2f6e3c",
+      foliage: "#24653a",
+      sky: "#8fc8ec",
+      water: false,
+      mountains: false,
+      snow: false,
+      storm: false,
+      night: false,
+    },
+    ground: {
+      ground: "#a48358",
+      foliage: "#786f43",
+      sky: "#d5ad73",
+      water: false,
+      mountains: true,
+      snow: false,
+      storm: false,
+      night: false,
+    },
+    ice: {
+      ground: "#d7edf2",
+      foliage: "#7caeb7",
+      sky: "#aecce2",
+      water: false,
+      mountains: true,
+      snow: true,
+      storm: false,
+      night: false,
+    },
+    normal: {
+      ground: habitatScene.ground,
+      foliage: habitatScene.foliage,
+      sky: "#8fc8ec",
+      water: habitatScene.water,
+      mountains: habitatScene.mountains,
+      snow: false,
+      storm: false,
+      night: false,
+    },
+    poison: {
+      ground: "#5d4a6d",
+      foliage: "#4e5d45",
+      sky: "#76598c",
+      water: false,
+      mountains: false,
+      snow: false,
+      storm: false,
+      night: true,
+    },
+    psychic: {
+      ground: "#a96985",
+      foliage: "#825572",
+      sky: "#925a94",
+      water: false,
+      mountains: false,
+      snow: false,
+      storm: false,
+      night: true,
+    },
+    rock: {
+      ground: "#786d59",
+      foliage: "#59634c",
+      sky: "#8791a0",
+      water: false,
+      mountains: true,
+      snow: false,
+      storm: false,
+      night: false,
+    },
+    steel: {
+      ground: "#61717a",
+      foliage: "#536866",
+      sky: "#7f99aa",
+      water: false,
+      mountains: true,
+      snow: false,
+      storm: false,
+      night: false,
+    },
+    water: {
+      ground: "#d5bd77",
+      foliage: "#467f48",
+      sky: "#72bde2",
+      water: true,
+      mountains: false,
+      snow: false,
+      storm: false,
+      night: false,
+    },
   } as const;
-  const scene = typeScene[primaryType as keyof typeof typeScene] ?? typeScene.normal;
+  const scene =
+    typeScene[primaryType as keyof typeof typeScene] ?? typeScene.normal;
   const isNightBiome = isEvening || scene.night;
   const isDesertBiome = primaryType === "ground" || primaryType === "rock";
   const isVolcanicBiome = primaryType === "fire";
   const isCalmNightBiome = scene.night && !scene.storm;
-  const denseForest = primaryType === "grass" || primaryType === "bug" || habitat === "forest" || habitat === "rare";
+  const denseForest =
+    primaryType === "grass" ||
+    primaryType === "bug" ||
+    habitat === "forest" ||
+    habitat === "rare";
   const hasCountryRoad = !scene.water && primaryType !== "cave";
-  const hasCottage = !scene.water && primaryType !== "cave" && !scene.mountains;
+  // Electric, Steel, Poison, and Fighting trade the cozy cottage and tree
+  // ring for a lit-up city skyline (see CitySkylineRing/CityHeroBlock below).
+  const hasCitySkyline =
+    primaryType === "electric" ||
+    primaryType === "steel" ||
+    primaryType === "poison" ||
+    primaryType === "fighting";
+  const cityPalette: CityPalette =
+    CITY_PALETTES[primaryType as keyof typeof CITY_PALETTES] ??
+    CITY_PALETTES.steel;
+  // Bug/Dragon/Fairy/Flying/Ghost/Ground/Ice/Psychic/Rock/Water always get
+  // their own signature landmark; Normal only gets its windmill in the same
+  // safe spot the cottage used to require (not water, not mountainous).
+  const hasTypeLandmark =
+    FOREGROUND_LANDMARK_TYPES.has(primaryType) ||
+    (primaryType === "normal" && !scene.water && !scene.mountains);
+  const hasCottage =
+    !scene.water &&
+    primaryType !== "cave" &&
+    !scene.mountains &&
+    !hasCitySkyline &&
+    !hasTypeLandmark;
   // Coastlines and dual-type Water Pokémon still get the shared mountain
   // backdrop. Only a pure Water Pokémon is intentionally open-water.
   const isPureWaterPokemon = typeNames.length === 1 && typeNames[0] === "water";
   const hasDistantMountains = !isPureWaterPokemon;
   const hasWindblownGrass = !scene.water && !isDesertBiome && !isVolcanicBiome;
-  const trees = (denseForest
-    ? [
-        [-6.1, -7.6, 1.28], [-5.0, -8.5, 1.06], [-4.1, -10.2, 1.42],
-        [-2.7, -8.2, 1.08], [-1.7, -11.2, 1.34], [0.9, -10.6, 1.14],
-        [2.2, -8.3, 1.23], [3.65, -9.4, 1.45], [4.8, -7.8, 1.04],
-        [5.9, -10.9, 1.38],
-      ]
-    : [
-        [-5.55, -8.35, 1.0], [-3.7, -10.45, 1.18], [-1.85, -11.8, 0.9],
-        [3.85, -10.35, 1.12], [5.4, -8.45, 1.02],
-      ]) as ReadonlyArray<readonly [number, number, number]>;
+  const trees = (
+    denseForest
+      ? [
+          [-6.1, -7.6, 1.28],
+          [-5.0, -8.5, 1.06],
+          [-4.1, -10.2, 1.42],
+          [-2.7, -8.2, 1.08],
+          [-1.7, -11.2, 1.34],
+          [0.9, -10.6, 1.14],
+          [2.2, -8.3, 1.23],
+          [3.65, -9.4, 1.45],
+          [4.8, -7.8, 1.04],
+          [5.9, -10.9, 1.38],
+        ]
+      : [
+          [-5.55, -8.35, 1.0],
+          [-3.7, -10.45, 1.18],
+          [-1.85, -11.8, 0.9],
+          [3.85, -10.35, 1.12],
+          [5.4, -8.45, 1.02],
+        ]
+  ) as ReadonlyArray<readonly [number, number, number]>;
   const bushes = [
-    [-4.65, -7.35, 0.42], [-3.05, -8.2, 0.3], [-1.35, -8.9, 0.38],
-    [0.15, -8.35, 0.32], [3.15, -7.65, 0.44], [4.75, -8.75, 0.34],
+    [-4.65, -7.35, 0.42],
+    [-3.05, -8.2, 0.3],
+    [-1.35, -8.9, 0.38],
+    [0.15, -8.35, 0.32],
+    [3.15, -7.65, 0.44],
+    [4.75, -8.75, 0.34],
   ] as const;
   const wildflowers = [
-    [-5.8, -6.6], [-4.3, -7.4], [-3.35, -6.95], [-2.1, -8.25],
-    [-0.8, -7.3], [1.15, -7.8], [2.3, -6.72], [3.65, -7.65], [5.3, -6.95],
+    [-5.8, -6.6],
+    [-4.3, -7.4],
+    [-3.35, -6.95],
+    [-2.1, -8.25],
+    [-0.8, -7.3],
+    [1.15, -7.8],
+    [2.3, -6.72],
+    [3.65, -7.65],
+    [5.3, -6.95],
   ] as const;
   const wildflowerPatches = [
-    [-5.5, -5.9], [-4.6, -6.25], [-3.7, -5.75], [-2.8, -6.45],
-    [-1.9, -5.95], [-0.9, -6.6], [-4.9, -8.1], [-3.95, -8.7],
-    [-2.9, -9.25], [-1.75, -9.85], [3.85, -5.85], [4.75, -6.35],
-    [5.65, -6.85], [3.75, -8.35], [4.75, -8.95], [5.85, -9.45],
-    [-5.75, -9.3], [-4.75, -10.15], [4.15, -10.4], [5.25, -11.15],
+    [-5.5, -5.9],
+    [-4.6, -6.25],
+    [-3.7, -5.75],
+    [-2.8, -6.45],
+    [-1.9, -5.95],
+    [-0.9, -6.6],
+    [-4.9, -8.1],
+    [-3.95, -8.7],
+    [-2.9, -9.25],
+    [-1.75, -9.85],
+    [3.85, -5.85],
+    [4.75, -6.35],
+    [5.65, -6.85],
+    [3.75, -8.35],
+    [4.75, -8.95],
+    [5.85, -9.45],
+    [-5.75, -9.3],
+    [-4.75, -10.15],
+    [4.15, -10.4],
+    [5.25, -11.15],
   ] as const;
   const fencePosts = [
-    [-4.8, -6.4], [-3.7, -6.95], [-2.6, -7.5], [2.95, -7.4], [4.15, -6.8],
+    [-4.8, -6.4],
+    [-3.7, -6.95],
+    [-2.6, -7.5],
+    [2.95, -7.4],
+    [4.15, -6.8],
     [5.3, -6.25],
   ] as const;
-  const iceMountainRange: ReadonlyArray<readonly [number, number, number, string]> = [
+  const iceMountainRange: ReadonlyArray<
+    readonly [number, number, number, string]
+  > = [
     [-6.2, 1.15, 3.6, "#b8d5df"],
     [-2.9, 1.8, 4.8, "#dcecf0"],
     [1.4, 1.35, 4.1, "#c7e0e7"],
     [5.2, 0.95, 3.25, "#b2d0da"],
   ];
-  const distantMountainRange: ReadonlyArray<readonly [number, number, number]> = [
-    [-8.8, 0.7, 3.8], [-5.9, 1.35, 5.4], [-2.5, 0.9, 4.5],
-    [0.6, 1.65, 6.1], [4.1, 0.82, 4.25], [7.4, 1.18, 5.15],
-  ];
-  const horizonMountainRange: ReadonlyArray<readonly [number, number, number]> = [
-    [-10.5, 1.1, 5.8], [-7.2, 1.8, 7.2], [-3.8, 1.35, 6.4],
-    [0.2, 2.25, 8.1], [4.3, 1.55, 6.9], [8.1, 1.9, 7.4],
-  ];
+  const distantMountainRange: ReadonlyArray<readonly [number, number, number]> =
+    [
+      [-8.8, 0.7, 3.8],
+      [-5.9, 1.35, 5.4],
+      [-2.5, 0.9, 4.5],
+      [0.6, 1.65, 6.1],
+      [4.1, 0.82, 4.25],
+      [7.4, 1.18, 5.15],
+    ];
+  const horizonMountainRange: ReadonlyArray<readonly [number, number, number]> =
+    [
+      [-10.5, 1.1, 5.8],
+      [-7.2, 1.8, 7.2],
+      [-3.8, 1.35, 6.4],
+      [0.2, 2.25, 8.1],
+      [4.3, 1.55, 6.9],
+      [8.1, 1.9, 7.4],
+    ];
   const sideMountainRange: ReadonlyArray<readonly [number, number, number]> = [
-    [-5.6, 0.3, 1.65], [-3.9, 0.58, 2.15], [-2.1, 0.18, 1.35],
+    [-5.6, 0.3, 1.65],
+    [-3.9, 0.58, 2.15],
+    [-2.1, 0.18, 1.35],
   ];
   const hasMeadow = !scene.water && !isDesertBiome && !isVolcanicBiome;
   const surroundingMountains = Array.from({ length: 20 }, (_, index) => {
@@ -2106,38 +4327,95 @@ const ScanEnvironment = memo(function ScanEnvironment({
         inclination={isNightBiome ? 0.53 : 0.5}
         azimuth={0.18}
         rayleigh={isNightBiome ? 1.2 : scene.storm ? 0.75 : 2}
-        sunPosition={isNightBiome ? [-5, 0.35, -6] : scene.storm ? [-3, 1.1, -6] : [4, 2, -6]}
+        sunPosition={
+          isNightBiome
+            ? [-5, 0.35, -6]
+            : scene.storm
+              ? [-3, 1.1, -6]
+              : [4, 2, -6]
+        }
       />
       <MoonlitSky />
       {isCalmNightBiome ? <Fireflies /> : null}
-      <mesh position={[VIEWER_ORBIT_TARGET[0], -3.72, VIEWER_ORBIT_TARGET[2]]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+      {!scene.storm ? (
+        <ParallaxClouds tint={isNightBiome ? "#4a5570" : "#fbfdff"} />
+      ) : null}
+      {primaryType === "poison" ? <SmogHaze /> : null}
+      <mesh
+        position={[VIEWER_ORBIT_TARGET[0], -3.72, VIEWER_ORBIT_TARGET[2]]}
+        rotation={[-Math.PI / 2, 0, 0]}
+        receiveShadow
+      >
         <planeGeometry args={[140, 140, 1, 1]} />
         <meshStandardMaterial color={scene.ground} roughness={1} />
       </mesh>
-      {hasDistantMountains ? surroundingMountains.map(([x, z, scale], index) => (
-        <mesh key={`surrounding-mountain-${index}`} position={[x, -1.4, z]} scale={[scale * 1.25, scale * 0.76, scale]}>
-          <coneGeometry args={[1, 1.8, 7]} />
-          <meshStandardMaterial
-            color={scene.snow ? "#b5d1dc" : isVolcanicBiome ? "#2e2529" : index % 2 ? "#53665c" : "#6b7768"}
-            flatShading
-            roughness={0.98}
-          />
-        </mesh>
-      )) : null}
-      {hasWindblownGrass ? surroundingTrees.map((tree, index) => (
-        <LandscapeTree
-          foliage={scene.foliage}
-          index={trees.length + index}
-          key={`surrounding-tree-${index}`}
-          position={tree}
+      {hasDistantMountains
+        ? surroundingMountains.map(([x, z, scale], index) => (
+            <mesh
+              key={`surrounding-mountain-${index}`}
+              position={[x, -1.4, z]}
+              scale={[scale * 1.25, scale * 0.76, scale]}
+            >
+              <coneGeometry args={[1, 1.8, 7]} />
+              <meshStandardMaterial
+                color={
+                  scene.snow
+                    ? "#b5d1dc"
+                    : isVolcanicBiome
+                      ? "#2e2529"
+                      : index % 2
+                        ? "#53665c"
+                        : "#6b7768"
+                }
+                flatShading
+                roughness={0.98}
+              />
+            </mesh>
+          ))
+        : null}
+      {/* A farther, fainter ring of big peaks so every angle of a 360° orbit
+          still finds mountains on the horizon, not just the front-facing
+          hand-placed ranges below. */}
+      {hasDistantMountains ? (
+        <GreatMountainRing
+          isVolcanicBiome={isVolcanicBiome}
+          snowCapped={scene.snow}
         />
-      )) : null}
+      ) : null}
+      {hasWindblownGrass && !hasCitySkyline
+        ? surroundingTrees.map((tree, index) => (
+            <LandscapeTree
+              foliage={scene.foliage}
+              index={trees.length + index}
+              key={`surrounding-tree-${index}`}
+              position={tree}
+            />
+          ))
+        : null}
+      {hasCitySkyline ? <CitySkylineRing palette={cityPalette} /> : null}
       {hasDistantMountains ? (
         <group position={[0, -1.15, -33]}>
           {horizonMountainRange.map(([x, y, scale], index) => (
-            <mesh key={`horizon-mountain-${index}`} position={[x, y, -index * 0.7]} scale={[scale * 1.45, scale * 0.46, scale]}>
+            <mesh
+              key={`horizon-mountain-${index}`}
+              position={[x, y, -index * 0.7]}
+              scale={[scale * 1.45, scale * 0.46, scale]}
+            >
               <coneGeometry args={[1, 1.8, 7]} />
-              <meshStandardMaterial color={scene.snow ? "#d9e9ee" : isVolcanicBiome ? "#241b22" : "#718a99"} depthWrite={false} flatShading roughness={1} transparent opacity={0.52} />
+              <meshStandardMaterial
+                color={
+                  scene.snow
+                    ? "#d9e9ee"
+                    : isVolcanicBiome
+                      ? "#241b22"
+                      : "#718a99"
+                }
+                depthWrite={false}
+                flatShading
+                roughness={1}
+                transparent
+                opacity={0.52}
+              />
             </mesh>
           ))}
         </group>
@@ -2145,11 +4423,23 @@ const ScanEnvironment = memo(function ScanEnvironment({
       {hasDistantMountains ? (
         <group position={[0, -1.55, -20.2]}>
           {distantMountainRange.map(([x, y, scale], index) => (
-            <group key={`distant-mountain-${index}`} position={[x, y, -index * 0.45]} scale={[scale * 1.28, scale * 0.68, scale]}>
+            <group
+              key={`distant-mountain-${index}`}
+              position={[x, y, -index * 0.45]}
+              scale={[scale * 1.28, scale * 0.68, scale]}
+            >
               <mesh>
                 <coneGeometry args={[1, 1.8, 7]} />
                 <meshStandardMaterial
-                  color={scene.snow ? "#b5d1dc" : isVolcanicBiome ? "#2e2529" : index % 2 ? "#53665c" : "#6b7768"}
+                  color={
+                    scene.snow
+                      ? "#b5d1dc"
+                      : isVolcanicBiome
+                        ? "#2e2529"
+                        : index % 2
+                          ? "#53665c"
+                          : "#6b7768"
+                  }
                   flatShading
                   roughness={0.95}
                 />
@@ -2157,7 +4447,11 @@ const ScanEnvironment = memo(function ScanEnvironment({
               {scene.snow ? (
                 <mesh position={[0, 0.72, 0]} scale={[0.56, 0.4, 0.56]}>
                   <coneGeometry args={[1, 1.2, 7]} />
-                  <meshStandardMaterial color="#f7fdff" flatShading roughness={0.98} />
+                  <meshStandardMaterial
+                    color="#f7fdff"
+                    flatShading
+                    roughness={0.98}
+                  />
                 </mesh>
               ) : null}
             </group>
@@ -2167,9 +4461,25 @@ const ScanEnvironment = memo(function ScanEnvironment({
       {hasDistantMountains ? (
         <group position={[-3.1, -2.65, -10.4]} rotation={[0, 0.18, 0]}>
           {sideMountainRange.map(([x, y, scale], index) => (
-            <mesh key={`side-mountain-${index}`} position={[x, y, -index * 0.55]} scale={[scale * 1.2, scale * 0.92, scale]}>
+            <mesh
+              key={`side-mountain-${index}`}
+              position={[x, y, -index * 0.55]}
+              scale={[scale * 1.2, scale * 0.92, scale]}
+            >
               <coneGeometry args={[1, 1.8, 7]} />
-              <meshStandardMaterial color={scene.snow ? "#bfd9e2" : isVolcanicBiome ? "#38262b" : index % 2 ? "#43564f" : "#526860"} flatShading roughness={1} />
+              <meshStandardMaterial
+                color={
+                  scene.snow
+                    ? "#bfd9e2"
+                    : isVolcanicBiome
+                      ? "#38262b"
+                      : index % 2
+                        ? "#43564f"
+                        : "#526860"
+                }
+                flatShading
+                roughness={1}
+              />
             </mesh>
           ))}
         </group>
@@ -2177,111 +4487,180 @@ const ScanEnvironment = memo(function ScanEnvironment({
       {isVolcanicBiome ? (
         <>
           <LavaVolcano />
-          <LavaVolcano position={[0.9, -3.08, -17.8]} scale={1.12} phase={1.7} />
-          <LavaVolcano position={[5.15, -3.2, -20.6]} scale={0.82} phase={3.1} />
+          <LavaVolcano
+            position={[0.9, -3.08, -17.8]}
+            scale={1.12}
+            phase={1.7}
+          />
+          <LavaVolcano
+            position={[5.15, -3.2, -20.6]}
+            scale={0.82}
+            phase={3.1}
+          />
         </>
       ) : null}
       {scene.water ? (
-        <mesh position={[VIEWER_ORBIT_TARGET[0], -3.65, VIEWER_ORBIT_TARGET[2]]} rotation={[-Math.PI / 2, 0, 0]}>
+        <mesh
+          position={[VIEWER_ORBIT_TARGET[0], -3.65, VIEWER_ORBIT_TARGET[2]]}
+          rotation={[-Math.PI / 2, 0, 0]}
+        >
           <planeGeometry args={[140, 140, 1, 1]} />
-          <meshStandardMaterial color="#3b9ed3" metalness={0.1} roughness={0.38} />
+          <meshStandardMaterial
+            color="#3b9ed3"
+            metalness={0.1}
+            roughness={0.38}
+          />
         </mesh>
       ) : null}
-      {hasCountryRoad ? (
-        <group>
-          <mesh position={[1.65, -3.695, -6.7]} rotation={[-Math.PI / 2, 0.12, 0]} receiveShadow>
-            <planeGeometry args={[2.45, 13.2]} />
-            <meshStandardMaterial color={isWetWeather ? "#6f6251" : "#a6835c"} roughness={isWetWeather ? 0.42 : 0.96} metalness={isWetWeather ? 0.12 : 0} />
+      {/* Extended toward the camera (past its old dead-end at z≈-0.1, which
+          cut off abruptly right under the Pokedex) so the road now runs out
+          past the near edge of the viewer's ground rather than stopping in
+          plain view. The far end at z≈-13.3 is unchanged so its second
+          segment still meets it seamlessly. */}
+      {hasCountryRoad ? <DirtRoad isWetWeather={isWetWeather} /> : null}
+      {!isDesertBiome &&
+        !isVolcanicBiome &&
+        trees.map((tree, index) => (
+          <LandscapeTree
+            foliage={scene.foliage}
+            index={index}
+            key={`tree-${tree[0]}-${tree[1]}`}
+            position={tree}
+          />
+        ))}
+      {!isDesertBiome &&
+        !isVolcanicBiome &&
+        bushes.map(([x, z, scale]) => (
+          <mesh key={`bush-${x}-${z}`} position={[x, -3.3, z]} scale={scale}>
+            <dodecahedronGeometry args={[1, 0]} />
+            <meshStandardMaterial
+              color={scene.foliage}
+              flatShading
+              roughness={1}
+            />
           </mesh>
-          <mesh position={[1.25, -3.695, -13.3]} rotation={[-Math.PI / 2, -0.08, 0]} receiveShadow>
-            <planeGeometry args={[2.45, 9.8]} />
-            <meshStandardMaterial color={isWetWeather ? "#6f6251" : "#a6835c"} roughness={isWetWeather ? 0.42 : 0.96} metalness={isWetWeather ? 0.12 : 0} />
-          </mesh>
-          <mesh position={[1.65, -3.676, -6.7]} rotation={[-Math.PI / 2, 0.12, 0]}>
-            <planeGeometry args={[0.075, 13.3]} />
-            <meshStandardMaterial color="#d6c39d" roughness={0.9} />
-          </mesh>
-          <mesh position={[1.25, -3.676, -13.3]} rotation={[-Math.PI / 2, -0.08, 0]}>
-            <planeGeometry args={[0.075, 9.9]} />
-            <meshStandardMaterial color="#d6c39d" roughness={0.9} />
-          </mesh>
-        </group>
-      ) : null}
-      {!isDesertBiome && !isVolcanicBiome && trees.map((tree, index) => (
-        <LandscapeTree
-          foliage={scene.foliage}
-          index={index}
-          key={`tree-${tree[0]}-${tree[1]}`}
-          position={tree}
-        />
-      ))}
-      {!isDesertBiome && !isVolcanicBiome && bushes.map(([x, z, scale]) => (
-        <mesh key={`bush-${x}-${z}`} position={[x, -3.3, z]} scale={scale}>
-          <dodecahedronGeometry args={[1, 0]} />
-          <meshStandardMaterial color={scene.foliage} flatShading roughness={1} />
-        </mesh>
-      ))}
+        ))}
       {hasWindblownGrass ? (
         <>
-          <WindblownGrass position={[-5.75, -3.48, -6.55]} scale={2.1} seed={1} />
-          <WindblownGrass position={[-7.35, -3.48, -3.9]} scale={2.8} seed={6} />
-          <WindblownGrass position={[-5.9, -3.48, -3.45]} scale={2.55} seed={7} />
+          <WindblownGrass
+            position={[-5.75, -3.48, -6.55]}
+            scale={2.1}
+            seed={1}
+          />
+          <WindblownGrass
+            position={[-7.35, -3.48, -3.9]}
+            scale={2.8}
+            seed={6}
+          />
+          <WindblownGrass
+            position={[-5.9, -3.48, -3.45]}
+            scale={2.55}
+            seed={7}
+          />
           <WindblownGrass position={[-3.6, -3.48, -8.1]} scale={1.8} seed={2} />
           <WindblownGrass position={[0.1, -3.48, -9.25]} scale={2.4} seed={3} />
           <WindblownGrass position={[4.9, -3.48, -7.1]} scale={2.25} seed={4} />
-          <WindblownGrass position={[5.55, -3.48, -10.6]} scale={1.9} seed={5} />
+          <WindblownGrass
+            position={[5.55, -3.48, -10.6]}
+            scale={1.9}
+            seed={5}
+          />
         </>
       ) : null}
       {hasWindblownGrass ? (
         <>
-          <LandscapeTree foliage={scene.foliage} index={11} position={[-6.7, -4.6, 1.12]} />
-          <LandscapeTree foliage={scene.foliage} index={12} position={[-5.55, -4.1, 0.84]} />
+          <LandscapeTree
+            foliage={scene.foliage}
+            index={11}
+            position={[-6.7, -4.6, 1.12]}
+          />
+          <LandscapeTree
+            foliage={scene.foliage}
+            index={12}
+            position={[-5.55, -4.1, 0.84]}
+          />
           <mesh position={[-6.1, -3.38, -3.75]} scale={[0.72, 0.42, 0.52]}>
             <dodecahedronGeometry args={[1, 0]} />
             <meshStandardMaterial color="#53645b" flatShading roughness={1} />
           </mesh>
         </>
       ) : null}
-      {hasMeadow && wildflowers.map(([x, z], index) => (
-        <group key={`flower-${x}-${z}`} position={[x, -3.48, z]}>
-          <mesh position={[0, 0.12, 0]}>
-            <cylinderGeometry args={[0.012, 0.02, 0.24, 4]} />
-            <meshStandardMaterial color="#386d38" roughness={1} />
-          </mesh>
-          <mesh position={[0, 0.26, 0]}>
-            <sphereGeometry args={[0.075, 5, 4]} />
-            <meshStandardMaterial color={index % 3 === 0 ? "#f2d96b" : index % 3 === 1 ? "#f49bb3" : "#d8d0ff"} roughness={0.85} />
-          </mesh>
-        </group>
-      ))}
-      {hasMeadow && wildflowerPatches.map(([x, z], index) => (
-        <group key={`flower-patch-${x}-${z}`} position={[x, -3.48, z]}>
-          {[-0.15, 0, 0.15].map((offset, flowerIndex) => (
-            <group key={offset} position={[offset, flowerIndex === 1 ? 0.04 : 0, flowerIndex === 1 ? 0.08 : -0.05]}>
-              <mesh position={[0, 0.1, 0]}>
-                <cylinderGeometry args={[0.01, 0.018, 0.2, 4]} />
-                <meshStandardMaterial color="#386d38" roughness={1} />
+      {hasMeadow &&
+        wildflowers.map(([x, z], index) => (
+          <group key={`flower-${x}-${z}`} position={[x, -3.48, z]}>
+            <mesh position={[0, 0.12, 0]}>
+              <cylinderGeometry args={[0.012, 0.02, 0.24, 4]} />
+              <meshStandardMaterial color="#386d38" roughness={1} />
+            </mesh>
+            <mesh position={[0, 0.26, 0]}>
+              <sphereGeometry args={[0.075, 5, 4]} />
+              <meshStandardMaterial
+                color={
+                  index % 3 === 0
+                    ? "#f2d96b"
+                    : index % 3 === 1
+                      ? "#f49bb3"
+                      : "#d8d0ff"
+                }
+                roughness={0.85}
+              />
+            </mesh>
+          </group>
+        ))}
+      {hasMeadow &&
+        wildflowerPatches.map(([x, z], index) => (
+          <group key={`flower-patch-${x}-${z}`} position={[x, -3.48, z]}>
+            {[-0.15, 0, 0.15].map((offset, flowerIndex) => (
+              <group
+                key={offset}
+                position={[
+                  offset,
+                  flowerIndex === 1 ? 0.04 : 0,
+                  flowerIndex === 1 ? 0.08 : -0.05,
+                ]}
+              >
+                <mesh position={[0, 0.1, 0]}>
+                  <cylinderGeometry args={[0.01, 0.018, 0.2, 4]} />
+                  <meshStandardMaterial color="#386d38" roughness={1} />
+                </mesh>
+                <mesh position={[0, 0.22, 0]}>
+                  <sphereGeometry args={[0.065, 5, 4]} />
+                  <meshStandardMaterial
+                    color={
+                      index % 4 === 0
+                        ? "#f2d96b"
+                        : index % 4 === 1
+                          ? "#f49bb3"
+                          : index % 4 === 2
+                            ? "#d8d0ff"
+                            : "#f7a45c"
+                    }
+                    roughness={0.85}
+                  />
+                </mesh>
+              </group>
+            ))}
+          </group>
+        ))}
+      {hasCountryRoad
+        ? fencePosts.map(([x, z], index) => (
+            <group key={`fence-${x}-${z}`} position={[x, -3.35, z]}>
+              <mesh>
+                <boxGeometry args={[0.09, 0.6, 0.09]} />
+                <meshStandardMaterial color="#75543a" roughness={1} />
               </mesh>
-              <mesh position={[0, 0.22, 0]}>
-                <sphereGeometry args={[0.065, 5, 4]} />
-                <meshStandardMaterial color={index % 4 === 0 ? "#f2d96b" : index % 4 === 1 ? "#f49bb3" : index % 4 === 2 ? "#d8d0ff" : "#f7a45c"} roughness={0.85} />
-              </mesh>
+              {index > 0 ? (
+                <mesh
+                  position={[index < 3 ? 0.56 : -0.56, -0.05, 0.28]}
+                  rotation={[0, index < 3 ? 0.5 : -0.5, 0]}
+                >
+                  <boxGeometry args={[1.28, 0.055, 0.055]} />
+                  <meshStandardMaterial color="#8d6746" roughness={1} />
+                </mesh>
+              ) : null}
             </group>
-          ))}
-        </group>
-      ))}
-      {hasCountryRoad ? fencePosts.map(([x, z], index) => (
-        <group key={`fence-${x}-${z}`} position={[x, -3.35, z]}>
-          <mesh>
-            <boxGeometry args={[0.09, 0.6, 0.09]} />
-            <meshStandardMaterial color="#75543a" roughness={1} />
-          </mesh>
-          {index > 0 ? <mesh position={[index < 3 ? 0.56 : -0.56, -0.05, 0.28]} rotation={[0, index < 3 ? 0.5 : -0.5, 0]}>
-            <boxGeometry args={[1.28, 0.055, 0.055]} />
-            <meshStandardMaterial color="#8d6746" roughness={1} />
-          </mesh> : null}
-        </group>
-      )) : null}
+          ))
+        : null}
       {[
         [-5.3, -7.2, 0.24],
         [-2.55, -7.85, 0.18],
@@ -2298,14 +4677,26 @@ const ScanEnvironment = memo(function ScanEnvironment({
           {scene.snow ? (
             <group position={[0, 0.15, -2.4]}>
               {iceMountainRange.map(([x, y, scale, color], index) => (
-                <group key={`ice-range-${index}`} position={[x, y, -index * 0.34]} scale={scale}>
+                <group
+                  key={`ice-range-${index}`}
+                  position={[x, y, -index * 0.34]}
+                  scale={scale}
+                >
                   <mesh>
                     <coneGeometry args={[1, 1.8, 7]} />
-                    <meshStandardMaterial color={color} flatShading roughness={0.9} />
+                    <meshStandardMaterial
+                      color={color}
+                      flatShading
+                      roughness={0.9}
+                    />
                   </mesh>
                   <mesh position={[0, 0.68, 0]} scale={[0.56, 0.38, 0.56]}>
                     <coneGeometry args={[1, 1.2, 7]} />
-                    <meshStandardMaterial color="#f6fdff" flatShading roughness={0.96} />
+                    <meshStandardMaterial
+                      color="#f6fdff"
+                      flatShading
+                      roughness={0.96}
+                    />
                   </mesh>
                 </group>
               ))}
@@ -2313,56 +4704,89 @@ const ScanEnvironment = memo(function ScanEnvironment({
           ) : null}
           <mesh position={[-3.5, 0.55, 0]} scale={[2.4, 2.8, 1.5]}>
             <coneGeometry args={[1, 1.8, 6]} />
-            <meshStandardMaterial color={scene.snow ? "#d8e9ef" : isVolcanicBiome ? "#3f3032" : "#66736a"} flatShading roughness={1} />
+            <meshStandardMaterial
+              color={
+                scene.snow ? "#d8e9ef" : isVolcanicBiome ? "#3f3032" : "#66736a"
+              }
+              flatShading
+              roughness={1}
+            />
           </mesh>
           <mesh position={[0.25, 0.68, -0.5]} scale={[2.45, 2.8, 1.8]}>
             <coneGeometry args={[1, 1.8, 6]} />
-            <meshStandardMaterial color={scene.snow ? "#b9d4df" : isVolcanicBiome ? "#35272a" : "#59675f"} flatShading roughness={1} />
+            <meshStandardMaterial
+              color={
+                scene.snow ? "#b9d4df" : isVolcanicBiome ? "#35272a" : "#59675f"
+              }
+              flatShading
+              roughness={1}
+            />
           </mesh>
           <mesh position={[3.75, 0.4, 0]} scale={[1.9, 2.3, 1.3]}>
             <coneGeometry args={[1, 1.8, 6]} />
-            <meshStandardMaterial color={scene.snow ? "#dfeff2" : isVolcanicBiome ? "#493337" : "#71806d"} flatShading roughness={1} />
+            <meshStandardMaterial
+              color={
+                scene.snow ? "#dfeff2" : isVolcanicBiome ? "#493337" : "#71806d"
+              }
+              flatShading
+              roughness={1}
+            />
           </mesh>
-          {scene.snow ? <mesh position={[0.25, 3.2, -0.5]} scale={[1.55, 0.65, 1.02]}>
-            <coneGeometry args={[1, 1.2, 6]} />
-            <meshStandardMaterial color="#f5fbff" flatShading roughness={0.96} />
-          </mesh> : null}
-          {isVolcanicBiome ? <mesh position={[0.25, 2.35, 0.42]} rotation={[Math.PI / 2, 0, 0]}>
-            <circleGeometry args={[0.44, 18]} />
-            <meshBasicMaterial color="#ff6a2c" toneMapped={false} />
-          </mesh> : null}
+          {scene.snow ? (
+            <mesh position={[0.25, 3.2, -0.5]} scale={[1.55, 0.65, 1.02]}>
+              <coneGeometry args={[1, 1.2, 6]} />
+              <meshStandardMaterial
+                color="#f5fbff"
+                flatShading
+                roughness={0.96}
+              />
+            </mesh>
+          ) : null}
+          {isVolcanicBiome ? (
+            <mesh position={[0.25, 2.35, 0.42]} rotation={[Math.PI / 2, 0, 0]}>
+              <circleGeometry args={[0.44, 18]} />
+              <meshBasicMaterial color="#ff6a2c" toneMapped={false} />
+            </mesh>
+          ) : null}
         </group>
       ) : null}
       {isDesertBiome ? (
         <group position={[-2.25, -2.55, -12.4]} rotation={[0, -0.12, 0]}>
-          {[[0, 1.65], [2.45, 1.05], [-2.1, 0.86]].map(([x, scale], index) => (
+          {[
+            [0, 1.65],
+            [2.45, 1.05],
+            [-2.1, 0.86],
+          ].map(([x, scale], index) => (
             <mesh key={index} position={[x, 0.25, -index * 0.34]} scale={scale}>
               <coneGeometry args={[1.1, 1.85, 4]} />
-              <meshStandardMaterial color={index === 0 ? "#d8b978" : "#c8a96e"} flatShading roughness={1} />
+              <meshStandardMaterial
+                color={index === 0 ? "#d8b978" : "#c8a96e"}
+                flatShading
+                roughness={1}
+              />
             </mesh>
           ))}
         </group>
       ) : null}
       {hasCottage ? (
-        <group position={[-3.8, -2.67, -11.2]} rotation={[0, 0.34, 0]}>
-          <mesh castShadow receiveShadow>
-            <boxGeometry args={[2.35, 1.45, 1.7]} />
-            <meshStandardMaterial color={habitat === "urban" ? "#b5a38c" : "#d4b17b"} roughness={0.92} />
-          </mesh>
-          <mesh position={[0, 1.04, 0]} rotation={[0, Math.PI / 4, 0]} castShadow>
-            <coneGeometry args={[1.7, 1.1, 4]} />
-            <meshStandardMaterial color="#9a493c" roughness={0.95} />
-          </mesh>
-          <mesh position={[0, -0.35, 0.87]}>
-            <boxGeometry args={[0.48, 0.76, 0.045]} />
-            <meshStandardMaterial color="#65422d" roughness={0.9} />
-          </mesh>
-          <mesh position={[-0.72, 0.12, 0.88]}>
-            <boxGeometry args={[0.44, 0.42, 0.05]} />
-            <meshStandardMaterial color={isNightBiome ? "#ffd47a" : "#7bbbd0"} emissive={isNightBiome ? "#d89431" : "#000000"} emissiveIntensity={isNightBiome ? 0.8 : 0} />
-          </mesh>
-        </group>
+        <Village
+          habitat={habitat}
+          isNightBiome={isNightBiome}
+          seed={terrainSeed}
+        />
       ) : null}
+      {hasCitySkyline ? <CityHeroBlock palette={cityPalette} /> : null}
+      {hasTypeLandmark ? (
+        <TypeLandmark isNightBiome={isNightBiome} primaryType={primaryType} />
+      ) : null}
+      {!isPureWaterPokemon && !hasCitySkyline ? (
+        <ScatteredBoulders seed={terrainSeed} />
+      ) : null}
+      {hasMeadow ? <FlowerField seed={terrainSeed} /> : null}
+      {!isNightBiome && !scene.storm && !isVolcanicBiome ? (
+        <Birds tint="#2b2f33" />
+      ) : null}
+      {hasMeadow && !isNightBiome && !scene.storm ? <Butterflies /> : null}
       <group position={[2.4, -1.1, -8.2]} scale={1.75}>
         <mesh castShadow>
           <sphereGeometry args={[0.82, 14, 10]} />
@@ -2379,10 +4803,84 @@ const ScanEnvironment = memo(function ScanEnvironment({
         />
       </group>
       {scene.snow ? <Snowfall /> : null}
-      <Rainfall enabled={isWetWeather && !isNightBiome && !scene.snow && !scene.storm} />
+      <Rainfall
+        enabled={isWetWeather && !isNightBiome && !scene.snow && !scene.storm}
+      />
     </group>
   );
 });
+
+// Streams a (possibly animated GIF) sprite image into a live CanvasTexture:
+// an off-DOM `<img>` does the actual decoding/animation as the browser
+// normally would, and every frame we sample whatever it's currently
+// displaying onto a canvas that backs the texture. This is what lets the
+// podium sprite be a genuine textured mesh — depth-tested like everything
+// else in the scene — instead of a DOM overlay that can only ever be fully
+// shown or fully `display:none`-hidden in front of the model.
+function useSpriteTexture(url: string | null, onError?: () => void) {
+  const [texture, setTexture] = useState<CanvasTexture | null>(null);
+  const [aspect, setAspect] = useState(1);
+  const imgRef = useRef<HTMLImageElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const onErrorRef = useRef(onError);
+  onErrorRef.current = onError;
+
+  useEffect(() => {
+    if (!url) {
+      setTexture(null);
+      return;
+    }
+    let cancelled = false;
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.decoding = "async";
+    img.style.cssText =
+      "position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;";
+    const canvas = document.createElement("canvas");
+
+    img.onload = () => {
+      if (cancelled) return;
+      canvas.width = img.naturalWidth || 96;
+      canvas.height = img.naturalHeight || 96;
+      const canvasTexture = new CanvasTexture(canvas);
+      canvasTexture.colorSpace = SRGBColorSpace;
+      canvasTexture.magFilter = NearestFilter;
+      canvasTexture.minFilter = NearestFilter;
+      imgRef.current = img;
+      canvasRef.current = canvas;
+      setAspect(canvas.width / canvas.height);
+      setTexture(canvasTexture);
+    };
+    img.onerror = () => {
+      if (cancelled) return;
+      onErrorRef.current?.();
+      setTexture(null);
+    };
+
+    document.body.appendChild(img);
+    img.src = url;
+
+    return () => {
+      cancelled = true;
+      imgRef.current = null;
+      canvasRef.current = null;
+      img.remove();
+    };
+  }, [url]);
+
+  useFrame(() => {
+    const img = imgRef.current;
+    const canvas = canvasRef.current;
+    if (!img || !canvas || !texture) return;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(img, 0, 0, canvas.width, canvas.height);
+    texture.needsUpdate = true;
+  });
+
+  return { aspect, texture };
+}
 
 function ScanTargetSprite({
   animatedSpriteUrl,
@@ -2393,53 +4891,69 @@ function ScanTargetSprite({
   concealed: boolean;
   spriteUrl: string | null;
 }) {
-  const [failedAnimatedUrl, setFailedAnimatedUrl] = useState<string | null>(null);
-  const displayUrl = failedAnimatedUrl === animatedSpriteUrl
-    ? spriteUrl ?? getSpriteUrl(25)
-    : animatedSpriteUrl ?? spriteUrl ?? getSpriteUrl(25);
+  const [failedAnimatedUrl, setFailedAnimatedUrl] = useState<string | null>(
+    null,
+  );
+  const displayUrl =
+    failedAnimatedUrl === animatedSpriteUrl
+      ? (spriteUrl ?? getSpriteUrl(25))
+      : (animatedSpriteUrl ?? spriteUrl ?? getSpriteUrl(25));
+  const { aspect, texture } = useSpriteTexture(displayUrl, () => {
+    if (displayUrl === animatedSpriteUrl)
+      setFailedAnimatedUrl(animatedSpriteUrl);
+  });
+
+  if (!texture) return null;
+
+  const height = 1.5;
+  const width = height * aspect;
 
   return (
-    <Html
-      center
-      occlude
-      key={displayUrl}
-      position={[0, 0.55, 0.9]}
-      scale={0.46}
-      style={{ pointerEvents: "none" }}
-      transform
-      zIndexRange={[0, -1]}
-    >
-      <img
-        alt=""
-        draggable={false}
-        onError={() => {
-          if (displayUrl === animatedSpriteUrl) setFailedAnimatedUrl(animatedSpriteUrl);
-        }}
-        src={displayUrl}
-        style={{
-          display: "block",
-          filter: concealed ? "brightness(0)" : "none",
-          height: "150px",
-          imageRendering: "pixelated",
-          objectFit: "contain",
-          width: "150px",
-        }}
-      />
-    </Html>
+    <Billboard position={[0, 0.55, 0.9]}>
+      <mesh scale={[width, height, 1]}>
+        <planeGeometry args={[1, 1]} />
+        <meshBasicMaterial
+          alphaTest={0.06}
+          color={concealed ? "#000000" : "#ffffff"}
+          map={texture}
+          toneMapped={false}
+          transparent
+        />
+      </mesh>
+    </Billboard>
   );
 }
 
-function CompanionPokemon({ pokemonId, shiny }: { pokemonId: number; shiny: boolean }) {
+function CompanionPokemon({
+  pokemonId,
+  shiny,
+}: {
+  pokemonId: number;
+  shiny: boolean;
+}) {
   const companionRef = useRef<Group>(null);
   useFrame(({ clock }) => {
     if (!companionRef.current) return;
-    companionRef.current.position.y = -1.72 + Math.sin(clock.getElapsedTime() * 1.4) * 0.08;
-    companionRef.current.rotation.z = Math.sin(clock.getElapsedTime() * 1.1) * 0.05;
+    companionRef.current.position.y =
+      -1.72 + Math.sin(clock.getElapsedTime() * 1.4) * 0.08;
+    companionRef.current.rotation.z =
+      Math.sin(clock.getElapsedTime() * 1.1) * 0.05;
   });
   return (
     <group ref={companionRef} position={[-2.55, -1.72, -4.55]}>
       <Html center transform scale={0.55} style={{ pointerEvents: "none" }}>
-        <img alt="Selected companion Pokemon" draggable={false} src={shiny ? getShinySpriteUrl(pokemonId) : getSpriteUrl(pokemonId)} style={{ display: "block", height: "130px", imageRendering: "pixelated", objectFit: "contain", width: "130px" }} />
+        <img
+          alt="Selected companion Pokemon"
+          draggable={false}
+          src={shiny ? getShinySpriteUrl(pokemonId) : getSpriteUrl(pokemonId)}
+          style={{
+            display: "block",
+            height: "130px",
+            imageRendering: "pixelated",
+            objectFit: "contain",
+            width: "130px",
+          }}
+        />
       </Html>
     </group>
   );
@@ -2489,7 +5003,8 @@ function PokedexModel({
   useEffect(() => {
     const skinPatternTexture = createSkinPatternTexture(selectedSkin);
     skinPatternTextureRef.current = skinPatternTexture;
-    skinPatternCanvasRef.current = skinPatternTexture.image as HTMLCanvasElement;
+    skinPatternCanvasRef.current =
+      skinPatternTexture.image as HTMLCanvasElement;
     const finishMaterials: MeshStandardMaterial[] = [];
     skinnedScene.traverse((object) => {
       if (!(object instanceof Mesh)) {
@@ -2504,16 +5019,16 @@ function PokedexModel({
           (material.name === "Red" || material.name === "Pinkish")
         ) {
           material.map = null;
-          material.emissiveMap = selectedSkin.rarity === "Legendary"
-            ? skinPatternTexture
-            : null;
+          material.emissiveMap =
+            selectedSkin.rarity === "Legendary" ? skinPatternTexture : null;
           material.color.setHSL(
             selectedSkin.hue / 360,
             selectedSkin.saturation / 100,
             selectedSkin.lightness / 100,
           );
           material.emissive.set("#ffffff");
-          material.emissiveIntensity = selectedSkin.rarity === "Legendary" ? 1.1 : 0;
+          material.emissiveIntensity =
+            selectedSkin.rarity === "Legendary" ? 1.1 : 0;
           material.metalness = selectedSkin.metalness;
           material.roughness = selectedSkin.roughness;
           material.needsUpdate = true;
@@ -2600,13 +5115,15 @@ function WorldConfetti({
     const landingTimes = new Float32Array(particleCount);
     const particleSizes = new Float32Array(particleCount);
     const spawnDelays = new Float32Array(particleCount);
-    const emitters: Array<[number, number, number]> = [
-      [-0.8, -0.5, 0.5],
-      [1.25, -0.7, -0.4],
-      [2.3, -1.1, -5.8],
-      [-2.1, -1.5, -4.5],
-      [0.4, -0.2, -2.2],
-    ];
+    // Confetti now comes from two sources instead of five points clustered
+    // near the Pokedex device: a burst right at the Pokemon's podium, and a
+    // wide rain of pieces drifting down from above. (The old ground
+    // emitters, combined with unlaunched particles rendering at rest on
+    // their origin until their spawn delay elapsed, is what read as a
+    // little pile spewing confetti — fixed in the vertex shader below by
+    // hiding particles entirely until they actually launch.)
+    const podiumOrigin: [number, number, number] = [2.4, -0.4, -6.6];
+    const skyRatio = 0.45;
     const palette: Array<[number, number, number]> = [
       [1, 0.3, 0.36],
       [1, 0.86, 0.2],
@@ -2617,43 +5134,76 @@ function WorldConfetti({
     ];
 
     const random = (index: number, salt: number) => {
-      const value = Math.sin(
-        (index + 1) * (12.9898 + salt * 78.233) + seed * 0.000001,
-      ) * 43_758.5453;
+      const value =
+        Math.sin((index + 1) * (12.9898 + salt * 78.233) + seed * 0.000001) *
+        43_758.5453;
       return value - Math.floor(value);
     };
 
     for (let index = 0; index < particleCount; index += 1) {
       const offset = index * 3;
-      const emitter = emitters[Math.floor(random(index, 1) * emitters.length)];
       const hue = palette[Math.floor(random(index, 2) * palette.length)];
-      const angle = random(index, 3) * Math.PI * 2;
-      const speed = 1.2 + random(index, 4) * 3.8;
-      const verticalSpeed = 2.1 + random(index, 5) * 6.5;
-      const originX = emitter[0] + (random(index, 6) - 0.5) * 0.56;
-      const originY = emitter[1] + (random(index, 7) - 0.5) * 0.28;
-      const originZ = emitter[2] + (random(index, 8) - 0.5) * 0.56;
+      const isSkyDrop = index < particleCount * skyRatio;
+
+      let originX: number;
+      let originY: number;
+      let originZ: number;
+      let velocityX: number;
+      let velocityY: number;
+      let velocityZ: number;
+      if (isSkyDrop) {
+        const spread = 7;
+        originX = podiumOrigin[0] + (random(index, 6) - 0.5) * spread * 2;
+        originY = 6 + random(index, 7) * 3.5;
+        originZ = podiumOrigin[2] + (random(index, 8) - 0.5) * spread * 2;
+        velocityX = (random(index, 11) - 0.5) * 1.1;
+        velocityY = -0.4 - random(index, 12) * 0.6;
+        velocityZ = (random(index, 13) - 0.5) * 1.1;
+      } else {
+        const angle = random(index, 3) * Math.PI * 2;
+        const speed = 1.2 + random(index, 4) * 3.8;
+        const verticalSpeed = 2.1 + random(index, 5) * 6.5;
+        originX = podiumOrigin[0] + (random(index, 6) - 0.5) * 0.5;
+        originY = podiumOrigin[1] + (random(index, 7) - 0.5) * 0.25;
+        originZ = podiumOrigin[2] + (random(index, 8) - 0.5) * 0.5;
+        velocityX = Math.cos(angle) * speed;
+        velocityY = verticalSpeed;
+        velocityZ = Math.sin(angle) * speed;
+      }
       const impactTime =
-        (verticalSpeed + Math.sqrt(verticalSpeed ** 2 + 2 * 4.8 * (originY + 3.64))) /
+        (velocityY + Math.sqrt(velocityY ** 2 + 2 * 4.8 * (originY + 3.64))) /
         4.8;
 
       origins.set([originX, originY, originZ], offset);
-      velocities.set(
-        [Math.cos(angle) * speed, verticalSpeed, Math.sin(angle) * speed],
-        offset,
-      );
+      velocities.set([velocityX, velocityY, velocityZ], offset);
       colors.set(hue, offset);
       landingTimes[index] = Math.min(CONFETTI_DURATION_SECONDS, impactTime);
       particleSizes[index] = 0.65 + random(index, 9) * 1.35;
-      spawnDelays[index] = settled ? 0 : random(index, 10) * 2.4;
+      spawnDelays[index] = settled
+        ? 0
+        : isSkyDrop
+          ? random(index, 10) * CONFETTI_DURATION_SECONDS * 0.7
+          : random(index, 10) * 2.4;
     }
 
     geometry.setAttribute("position", new Float32BufferAttribute(origins, 3));
     geometry.setAttribute("origin", new Float32BufferAttribute(origins, 3));
-    geometry.setAttribute("velocity", new Float32BufferAttribute(velocities, 3));
-    geometry.setAttribute("landingTime", new Float32BufferAttribute(landingTimes, 1));
-    geometry.setAttribute("particleSize", new Float32BufferAttribute(particleSizes, 1));
-    geometry.setAttribute("spawnDelay", new Float32BufferAttribute(spawnDelays, 1));
+    geometry.setAttribute(
+      "velocity",
+      new Float32BufferAttribute(velocities, 3),
+    );
+    geometry.setAttribute(
+      "landingTime",
+      new Float32BufferAttribute(landingTimes, 1),
+    );
+    geometry.setAttribute(
+      "particleSize",
+      new Float32BufferAttribute(particleSizes, 1),
+    );
+    geometry.setAttribute(
+      "spawnDelay",
+      new Float32BufferAttribute(spawnDelays, 1),
+    );
     geometry.setAttribute("color", new Float32BufferAttribute(colors, 3));
     return { geometry };
   }, [particleCount, seed, settled]);
@@ -2693,7 +5243,7 @@ function WorldConfetti({
           casingMax: { value: new Vector3(...POKEDEX_CASING_BOUNDS.max) },
         }}
         vertexShader={
-          "attribute vec3 origin; attribute vec3 velocity; attribute vec3 color; attribute float landingTime; attribute float particleSize; attribute float spawnDelay; uniform float elapsed; uniform vec3 modelPosition; uniform float modelRotationY; uniform float modelScale; uniform vec3 casingMin; uniform vec3 casingMax; varying vec3 vColor; vec3 toLocal(vec3 worldPoint) { vec3 point = (worldPoint - modelPosition) / modelScale; float c = cos(-modelRotationY); float s = sin(-modelRotationY); return vec3(c * point.x + s * point.z, point.y, -s * point.x + c * point.z); } vec3 toWorld(vec3 localPoint) { float c = cos(modelRotationY); float s = sin(modelRotationY); return modelPosition + modelScale * vec3(c * localPoint.x + s * localPoint.z, localPoint.y, -s * localPoint.x + c * localPoint.z); } void main() { float t = min(max(0.0, elapsed - spawnDelay), landingTime); vec3 worldPosition = origin + velocity * t; worldPosition.y = max(-3.64, origin.y + velocity.y * t - 2.4 * t * t); vec3 localPosition = toLocal(worldPosition); bool insideCasing = localPosition.x > casingMin.x && localPosition.x < casingMax.x && localPosition.y > casingMin.y && localPosition.y < casingMax.y && localPosition.z < casingMax.z && localPosition.z > casingMin.z - 2.5; if (insideCasing) { localPosition.z = casingMax.z + 0.025; localPosition.x += sin(origin.y * 17.0 + origin.z * 11.0) * 0.035; localPosition.y += cos(origin.x * 13.0 + origin.z * 7.0) * 0.022; worldPosition = toWorld(localPosition); } vec4 mvPosition = modelViewMatrix * vec4(worldPosition, 1.0); gl_Position = projectionMatrix * mvPosition; gl_PointSize = clamp(15.0 * particleSize * (180.0 / -mvPosition.z), 3.0, 18.0); vColor = color; }"
+          "attribute vec3 origin; attribute vec3 velocity; attribute vec3 color; attribute float landingTime; attribute float particleSize; attribute float spawnDelay; uniform float elapsed; uniform vec3 modelPosition; uniform float modelRotationY; uniform float modelScale; uniform vec3 casingMin; uniform vec3 casingMax; varying vec3 vColor; vec3 toLocal(vec3 worldPoint) { vec3 point = (worldPoint - modelPosition) / modelScale; float c = cos(-modelRotationY); float s = sin(-modelRotationY); return vec3(c * point.x + s * point.z, point.y, -s * point.x + c * point.z); } vec3 toWorld(vec3 localPoint) { float c = cos(modelRotationY); float s = sin(modelRotationY); return modelPosition + modelScale * vec3(c * localPoint.x + s * localPoint.z, localPoint.y, -s * localPoint.x + c * localPoint.z); } void main() { float t = min(max(0.0, elapsed - spawnDelay), landingTime); vec3 worldPosition = origin + velocity * t; worldPosition.y = max(-3.64, origin.y + velocity.y * t - 2.4 * t * t); vec3 localPosition = toLocal(worldPosition); bool insideCasing = localPosition.x > casingMin.x && localPosition.x < casingMax.x && localPosition.y > casingMin.y && localPosition.y < casingMax.y && localPosition.z < casingMax.z && localPosition.z > casingMin.z - 2.5; if (insideCasing) { localPosition.z = casingMax.z + 0.025; localPosition.x += sin(origin.y * 17.0 + origin.z * 11.0) * 0.035; localPosition.y += cos(origin.x * 13.0 + origin.z * 7.0) * 0.022; worldPosition = toWorld(localPosition); } vec4 mvPosition = modelViewMatrix * vec4(worldPosition, 1.0); gl_Position = projectionMatrix * mvPosition; float notLaunchedYet = step(elapsed, spawnDelay); gl_PointSize = notLaunchedYet > 0.5 ? 0.0 : clamp(15.0 * particleSize * (180.0 / -mvPosition.z), 3.0, 18.0); vColor = color; }"
         }
       />
     </points>
@@ -2945,6 +5495,10 @@ function App() {
   );
   const [guess, setGuess] = useState("");
   const [roundResult, setRoundResult] = useState<RoundResult>("guessing");
+  const [lastRoundOutcome, setLastRoundOutcome] = useState<{
+    fuzzy: boolean;
+    points: number;
+  } | null>(null);
   const [isGamePaused, setIsGamePaused] = useState(false);
   const [gameStats, setGameStats] = useState<GameStats>(() => ({
     score: getSavedGameScore(),
@@ -2954,29 +5508,48 @@ function App() {
   const [capturedPokemonIds, setCapturedPokemonIds] = useState<Set<number>>(
     getSavedCapturedPokemonIds,
   );
-  const [shinyCapturedPokemonIds, setShinyCapturedPokemonIds] = useState<Set<number>>(
-    getSavedShinyCapturedPokemonIds,
-  );
+  const [shinyCapturedPokemonIds, setShinyCapturedPokemonIds] = useState<
+    Set<number>
+  >(getSavedShinyCapturedPokemonIds);
   const [isCollectionOpen, setIsCollectionOpen] = useState(false);
-  const [companionPokemonId, setCompanionPokemonId] = useState<number | null>(() => {
-    const savedId = Number(window.localStorage.getItem(COMPANION_POKEMON_STORAGE_KEY));
-    return Number.isInteger(savedId) && savedId >= 1 && savedId <= GAME_POKEMON_COUNT ? savedId : null;
-  });
+  const [companionPokemonId, setCompanionPokemonId] = useState<number | null>(
+    () => {
+      const savedId = Number(
+        window.localStorage.getItem(COMPANION_POKEMON_STORAGE_KEY),
+      );
+      return Number.isInteger(savedId) &&
+        savedId >= 1 &&
+        savedId <= GAME_POKEMON_COUNT
+        ? savedId
+        : null;
+    },
+  );
   const [nextRoundSeconds, setNextRoundSeconds] = useState<number | null>(null);
   const [roundSecondsRemaining, setRoundSecondsRemaining] = useState(
     ROUND_TIME_LIMIT_SECONDS,
   );
   const [roundElapsedSeconds, setRoundElapsedSeconds] = useState(0);
-  const [completedRounds, setCompletedRounds] = useState(getSavedCompletedRounds);
-  const [walletRewardMessage, setWalletRewardMessage] = useState("");
-  const [ownedSkins, setOwnedSkins] = useState<Set<PokedexSkinId>>(
-    () => getSavedOwnedSkins(),
+  const [completedRounds, setCompletedRounds] = useState(
+    getSavedCompletedRounds,
   );
-  const [equippedSkin, setEquippedSkin] = useState<PokedexSkinId>(() => (window.localStorage.getItem(POKEDEX_EQUIPPED_SKIN_STORAGE_KEY) as PokedexSkinId) || "classic");
-  const [hasUncaughtRadar, setHasUncaughtRadar] = useState(() => window.localStorage.getItem(UNCAUGHT_RADAR_STORAGE_KEY) === "true");
+  const [walletRewardMessage, setWalletRewardMessage] = useState("");
+  const [ownedSkins, setOwnedSkins] = useState<Set<PokedexSkinId>>(() =>
+    getSavedOwnedSkins(),
+  );
+  const [equippedSkin, setEquippedSkin] = useState<PokedexSkinId>(
+    () =>
+      (window.localStorage.getItem(
+        POKEDEX_EQUIPPED_SKIN_STORAGE_KEY,
+      ) as PokedexSkinId) || "classic",
+  );
+  const [hasUncaughtRadar, setHasUncaughtRadar] = useState(
+    () => window.localStorage.getItem(UNCAUGHT_RADAR_STORAGE_KEY) === "true",
+  );
   const [isIntroComplete, setIsIntroComplete] = useState(false);
   const [isHintVisible, setIsHintVisible] = useState(false);
-  const [nameRevealLevel, setNameRevealLevel] = useState(getSavedNameRevealLevel);
+  const [nameRevealLevel, setNameRevealLevel] = useState(
+    getSavedNameRevealLevel,
+  );
   const [hasBoughtExtraTime, setHasBoughtExtraTime] = useState(false);
   const [confettiLevel, setConfettiLevel] = useState(getSavedConfettiLevel);
   const [showConfetti, setShowConfetti] = useState(false);
@@ -3019,40 +5592,45 @@ function App() {
     query: "",
   });
 
-  const startNewRound = useCallback((generationIds = selectedGenerations) => {
-    setGuess("");
-    guessRef.current = "";
-    setRoundResult("guessing");
-    setIsGamePaused(false);
-    setNextRoundSeconds(null);
-    setRoundSecondsRemaining(ROUND_TIME_LIMIT_SECONDS);
-    const selectedIds = getPokemonIdsForGenerations(generationIds);
-    const hasUncaughtEligiblePokemon = selectedIds.some(
-      (pokemonId) => !capturedPokemonIds.has(pokemonId),
-    );
-    if (hasUncaughtRadar && !hasUncaughtEligiblePokemon) {
-      setWalletRewardMessage("Radar: all selected Pokémon are already captured. Choose more generations.");
-      return;
-    }
-    const nextPokemonId = getRandomGamePokemonId(
-      generationIds,
-      recentGamePokemonIdsRef.current,
-      hasUncaughtRadar ? capturedPokemonIds : undefined,
-    );
-    recentGamePokemonIdsRef.current = rememberGamePokemonId(
-      recentGamePokemonIdsRef.current,
-      nextPokemonId,
-    );
-    saveRecentGamePokemonIds(recentGamePokemonIdsRef.current);
-    setSubmittedQuery(String(nextPokemonId));
-    setIsIntroComplete(false);
-    setIsCryComplete(false);
-    setIsHintVisible(false);
-    setRoundElapsedSeconds(0);
-    hasCountedCurrentRoundRef.current = false;
-    setHasBoughtExtraTime(false);
-    setIsShinyRound(Math.random() < SHINY_ROUND_CHANCE);
-  }, [capturedPokemonIds, hasUncaughtRadar, selectedGenerations]);
+  const startNewRound = useCallback(
+    (generationIds = selectedGenerations) => {
+      setGuess("");
+      guessRef.current = "";
+      setRoundResult("guessing");
+      setIsGamePaused(false);
+      setNextRoundSeconds(null);
+      setRoundSecondsRemaining(ROUND_TIME_LIMIT_SECONDS);
+      const selectedIds = getPokemonIdsForGenerations(generationIds);
+      const hasUncaughtEligiblePokemon = selectedIds.some(
+        (pokemonId) => !capturedPokemonIds.has(pokemonId),
+      );
+      if (hasUncaughtRadar && !hasUncaughtEligiblePokemon) {
+        setWalletRewardMessage(
+          "Radar: all selected Pokémon are already captured. Choose more generations.",
+        );
+        return;
+      }
+      const nextPokemonId = getRandomGamePokemonId(
+        generationIds,
+        recentGamePokemonIdsRef.current,
+        hasUncaughtRadar ? capturedPokemonIds : undefined,
+      );
+      recentGamePokemonIdsRef.current = rememberGamePokemonId(
+        recentGamePokemonIdsRef.current,
+        nextPokemonId,
+      );
+      saveRecentGamePokemonIds(recentGamePokemonIdsRef.current);
+      setSubmittedQuery(String(nextPokemonId));
+      setIsIntroComplete(false);
+      setIsCryComplete(false);
+      setIsHintVisible(false);
+      setRoundElapsedSeconds(0);
+      hasCountedCurrentRoundRef.current = false;
+      setHasBoughtExtraTime(false);
+      setIsShinyRound(Math.random() < SHINY_ROUND_CHANCE);
+    },
+    [capturedPokemonIds, hasUncaughtRadar, selectedGenerations],
+  );
 
   useEffect(() => {
     if (mode === "game" && !hasInitializedGameRef.current) {
@@ -3079,7 +5657,9 @@ function App() {
           throw new Error("Unable to load Pokemon names.");
         }
 
-        const data = (await response.json()) as { results: PokemonIndexEntry[] };
+        const data = (await response.json()) as {
+          results: PokemonIndexEntry[];
+        };
         setVoicePokemonIndex(
           data.results.map((pokemon, index) => ({ ...pokemon, id: index + 1 })),
         );
@@ -3100,7 +5680,10 @@ function App() {
   }, [mode]);
 
   useEffect(() => {
-    window.localStorage.setItem(GAME_SCORE_STORAGE_KEY, String(gameStats.score));
+    window.localStorage.setItem(
+      GAME_SCORE_STORAGE_KEY,
+      String(gameStats.score),
+    );
   }, [gameStats.score]);
 
   useEffect(() => {
@@ -3113,7 +5696,9 @@ function App() {
   useEffect(() => {
     window.localStorage.setItem(
       CAPTURED_POKEMON_STORAGE_KEY,
-      JSON.stringify([...capturedPokemonIds].sort((left, right) => left - right)),
+      JSON.stringify(
+        [...capturedPokemonIds].sort((left, right) => left - right),
+      ),
     );
   }, [capturedPokemonIds]);
 
@@ -3141,27 +5726,58 @@ function App() {
   }, []);
 
   useEffect(() => {
-    window.localStorage.setItem(NAME_REVEAL_UPGRADE_STORAGE_KEY, String(nameRevealLevel));
+    window.localStorage.setItem(
+      NAME_REVEAL_UPGRADE_STORAGE_KEY,
+      String(nameRevealLevel),
+    );
   }, [nameRevealLevel]);
 
   useEffect(() => {
-    window.localStorage.setItem(COMPLETED_ROUNDS_STORAGE_KEY, String(completedRounds));
+    window.localStorage.setItem(
+      COMPLETED_ROUNDS_STORAGE_KEY,
+      String(completedRounds),
+    );
   }, [completedRounds]);
-  useEffect(() => { window.localStorage.setItem(POKEDEX_SKINS_STORAGE_KEY, JSON.stringify([...ownedSkins])); }, [ownedSkins]);
-  useEffect(() => { window.localStorage.setItem(POKEDEX_EQUIPPED_SKIN_STORAGE_KEY, equippedSkin); }, [equippedSkin]);
   useEffect(() => {
-    if (companionPokemonId === null) window.localStorage.removeItem(COMPANION_POKEMON_STORAGE_KEY);
-    else window.localStorage.setItem(COMPANION_POKEMON_STORAGE_KEY, String(companionPokemonId));
+    window.localStorage.setItem(
+      POKEDEX_SKINS_STORAGE_KEY,
+      JSON.stringify([...ownedSkins]),
+    );
+  }, [ownedSkins]);
+  useEffect(() => {
+    window.localStorage.setItem(
+      POKEDEX_EQUIPPED_SKIN_STORAGE_KEY,
+      equippedSkin,
+    );
+  }, [equippedSkin]);
+  useEffect(() => {
+    if (companionPokemonId === null)
+      window.localStorage.removeItem(COMPANION_POKEMON_STORAGE_KEY);
+    else
+      window.localStorage.setItem(
+        COMPANION_POKEMON_STORAGE_KEY,
+        String(companionPokemonId),
+      );
   }, [companionPokemonId]);
-  useEffect(() => { window.localStorage.setItem(UNCAUGHT_RADAR_STORAGE_KEY, String(hasUncaughtRadar)); }, [hasUncaughtRadar]);
-  useEffect(() => { window.localStorage.setItem(INTRO_MUTED_STORAGE_KEY, String(isIntroMuted)); }, [isIntroMuted]);
+  useEffect(() => {
+    window.localStorage.setItem(
+      UNCAUGHT_RADAR_STORAGE_KEY,
+      String(hasUncaughtRadar),
+    );
+  }, [hasUncaughtRadar]);
+  useEffect(() => {
+    window.localStorage.setItem(INTRO_MUTED_STORAGE_KEY, String(isIntroMuted));
+  }, [isIntroMuted]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const expectedKey = KONAMI_CODE[konamiProgressRef.current];
-      konamiProgressRef.current = event.code === expectedKey
-        ? konamiProgressRef.current + 1
-        : event.code === KONAMI_CODE[0] ? 1 : 0;
+      konamiProgressRef.current =
+        event.code === expectedKey
+          ? konamiProgressRef.current + 1
+          : event.code === KONAMI_CODE[0]
+            ? 1
+            : 0;
       if (konamiProgressRef.current !== KONAMI_CODE.length) return;
       konamiProgressRef.current = 0;
       const burstId = Date.now();
@@ -3190,7 +5806,12 @@ function App() {
         return;
       }
 
-      setPokemonState({ status: "loading", pokemon: null, error: "", query: "" });
+      setPokemonState({
+        status: "loading",
+        pokemon: null,
+        error: "",
+        query: "",
+      });
 
       try {
         const response = await fetch(
@@ -3257,7 +5878,8 @@ function App() {
 
   useEffect(() => {
     if (
-      mode !== "game" || isGamePaused ||
+      mode !== "game" ||
+      isGamePaused ||
       roundResult !== "guessing" ||
       pokemonState.status !== "ready" ||
       pokemonState.query !== submittedQuery.trim().toLowerCase()
@@ -3269,7 +5891,8 @@ function App() {
       return;
     }
 
-    const cryUrl = pokemonState.pokemon.cries.latest ?? pokemonState.pokemon.cries.legacy;
+    const cryUrl =
+      pokemonState.pokemon.cries.latest ?? pokemonState.pokemon.cries.legacy;
 
     if (!cryUrl) {
       const completeWithoutCry = window.setTimeout(
@@ -3291,10 +5914,16 @@ function App() {
       cry.pause();
       cry.currentTime = 0;
     };
-  }, [isGamePaused, isIntroComplete, mode, pokemonState, roundResult, submittedQuery]);
+  }, [
+    isGamePaused,
+    isIntroComplete,
+    mode,
+    pokemonState,
+    roundResult,
+    submittedQuery,
+  ]);
 
-  const isGameRoundRevealed =
-    roundResult !== "guessing";
+  const isGameRoundRevealed = roundResult !== "guessing";
   const introPlaybackKey =
     mode === "game" &&
     roundResult === "guessing" &&
@@ -3333,7 +5962,8 @@ function App() {
 
   useEffect(() => {
     if (
-      mode !== "game" || isGamePaused ||
+      mode !== "game" ||
+      isGamePaused ||
       roundResult !== "guessing" ||
       pokemonState.status !== "ready" ||
       pokemonState.query !== submittedQuery.trim().toLowerCase()
@@ -3349,7 +5979,14 @@ function App() {
     return () => {
       window.clearInterval(interval);
     };
-  }, [isGamePaused, mode, pokemonState, roundResult, submittedQuery, roundSecondsRemaining]);
+  }, [
+    isGamePaused,
+    mode,
+    pokemonState,
+    roundResult,
+    submittedQuery,
+    roundSecondsRemaining,
+  ]);
 
   useEffect(() => {
     if (
@@ -3376,7 +6013,10 @@ function App() {
       const nextRounds = completedRounds + 1;
       setCompletedRounds(nextRounds);
       if (nextRounds % 10 === 0) {
-        setGameStats((currentStats) => ({ ...currentStats, score: currentStats.score + 100 }));
+        setGameStats((currentStats) => ({
+          ...currentStats,
+          score: currentStats.score + 100,
+        }));
         setWalletRewardMessage("10 rounds complete! +100 wallet points.");
       }
     }, 0);
@@ -3473,88 +6113,126 @@ function App() {
 
     const nextGenerations = isSelected
       ? selectedGenerations.filter((selectedId) => selectedId !== generationId)
-      : [...selectedGenerations, generationId].sort((left, right) => left - right);
+      : [...selectedGenerations, generationId].sort(
+          (left, right) => left - right,
+        );
 
     setSelectedGenerations(nextGenerations);
   };
-  const submitGuess = useCallback((submittedGuess = guessRef.current) => {
-    if (isGamePaused || pokemonState.status !== "ready" || !submittedGuess.trim()) {
-      return;
-    }
-
-    const isCorrect =
-      normalizePokemonName(submittedGuess) ===
-      normalizePokemonName(pokemonState.pokemon.name);
-
-    setRoundResult(isCorrect ? "correct" : "incorrect");
-    if (isCorrect) {
-      playCorrectJingle();
-      if (isShinyRound) {
-        playShinyFlourish();
-        setShowShinyCelebration(true);
-        window.setTimeout(() => setShowShinyCelebration(false), 1_900);
+  const submitGuess = useCallback(
+    (submittedGuess = guessRef.current) => {
+      if (
+        isGamePaused ||
+        pokemonState.status !== "ready" ||
+        !submittedGuess.trim()
+      ) {
+        return;
       }
-      setOwnedSkins((currentSkins) => {
-        const unownedSkins = POKEDEX_SKINS.filter((skin) => !currentSkins.has(skin.id));
-        if (unownedSkins.length === 0) return currentSkins;
-        const totalWeight = unownedSkins.reduce((sum, skin) => sum + skin.weight, 0);
-        let roll = Math.random() * totalWeight;
-        const reward = unownedSkins.find((skin) => (roll -= skin.weight) <= 0) ?? unownedSkins[0];
-        setWalletRewardMessage(`${reward.rarity} skin unlocked: ${reward.label}!`);
-        return new Set([...currentSkins, reward.id]);
-      });
-      if (confettiLevel > 0) {
-        const burstId = Date.now();
-        setConfettiEventId(burstId);
-        setShowConfetti(true);
-        window.setTimeout(() => {
-          setShowConfetti(false);
-          setSettledConfetti((current) => [
-            ...current,
-            { id: burstId, level: confettiLevel },
-          ]);
-        }, 5_000);
-      }
-      setCapturedPokemonIds((currentCaptures) => {
-        if (currentCaptures.has(pokemonState.pokemon.id)) {
-          return currentCaptures;
+
+      const normalizedGuess = normalizePokemonName(submittedGuess);
+      const normalizedAnswer = normalizePokemonName(pokemonState.pokemon.name);
+      const isExactMatch = normalizedGuess === normalizedAnswer;
+      // A guess that's close but not letter-perfect (a typo, a missing
+      // letter) still catches the Pokemon — just for reduced points.
+      const isFuzzyMatch =
+        !isExactMatch &&
+        getNameSimilarity(normalizedGuess, normalizedAnswer) >=
+          FUZZY_MATCH_THRESHOLD;
+      const isCorrect = isExactMatch || isFuzzyMatch;
+      const basePoints =
+        Math.ceil(
+          (MAX_ROUND_POINTS * roundSecondsRemaining) / ROUND_TIME_LIMIT_SECONDS,
+        ) * (isShinyRound ? 2 : 1);
+      const roundPoints = isFuzzyMatch
+        ? Math.max(1, Math.round(basePoints * FUZZY_MATCH_SCORE_MULTIPLIER))
+        : basePoints;
+
+      setRoundResult(isCorrect ? "correct" : "incorrect");
+      setLastRoundOutcome(
+        isCorrect ? { fuzzy: isFuzzyMatch, points: roundPoints } : null,
+      );
+      if (isCorrect) {
+        playCorrectJingle();
+        if (isShinyRound) {
+          playShinyFlourish();
+          setShowShinyCelebration(true);
+          window.setTimeout(() => setShowShinyCelebration(false), 1_900);
         }
-
-        const nextCaptures = new Set(currentCaptures);
-        nextCaptures.add(pokemonState.pokemon.id);
-        return nextCaptures;
-      });
-      if (isShinyRound) {
-        setShinyCapturedPokemonIds((currentShinyCaptures) => {
-          if (currentShinyCaptures.has(pokemonState.pokemon.id)) {
-            return currentShinyCaptures;
+        setOwnedSkins((currentSkins) => {
+          const unownedSkins = POKEDEX_SKINS.filter(
+            (skin) => !currentSkins.has(skin.id),
+          );
+          if (unownedSkins.length === 0) return currentSkins;
+          const totalWeight = unownedSkins.reduce(
+            (sum, skin) => sum + skin.weight,
+            0,
+          );
+          let roll = Math.random() * totalWeight;
+          const reward =
+            unownedSkins.find((skin) => (roll -= skin.weight) <= 0) ??
+            unownedSkins[0];
+          setWalletRewardMessage(
+            `${reward.rarity} skin unlocked: ${reward.label}!`,
+          );
+          return new Set([...currentSkins, reward.id]);
+        });
+        if (confettiLevel > 0) {
+          const burstId = Date.now();
+          setConfettiEventId(burstId);
+          setShowConfetti(true);
+          window.setTimeout(() => {
+            setShowConfetti(false);
+            setSettledConfetti((current) => [
+              ...current,
+              { id: burstId, level: confettiLevel },
+            ]);
+          }, 5_000);
+        }
+        setCapturedPokemonIds((currentCaptures) => {
+          if (currentCaptures.has(pokemonState.pokemon.id)) {
+            return currentCaptures;
           }
 
-          const nextShinyCaptures = new Set(currentShinyCaptures);
-          nextShinyCaptures.add(pokemonState.pokemon.id);
-          return nextShinyCaptures;
+          const nextCaptures = new Set(currentCaptures);
+          nextCaptures.add(pokemonState.pokemon.id);
+          return nextCaptures;
         });
-      }
-    } else {
-      playIncorrectBuzz();
-    }
-    setGameStats((currentStats) => {
-      if (!isCorrect) {
-        return { ...currentStats, streak: 0 };
-      }
+        if (isShinyRound) {
+          setShinyCapturedPokemonIds((currentShinyCaptures) => {
+            if (currentShinyCaptures.has(pokemonState.pokemon.id)) {
+              return currentShinyCaptures;
+            }
 
-      const nextStreak = currentStats.streak + 1;
-      const roundPoints = Math.ceil(
-        (MAX_ROUND_POINTS * roundSecondsRemaining) / ROUND_TIME_LIMIT_SECONDS,
-      ) * (isShinyRound ? 2 : 1);
+            const nextShinyCaptures = new Set(currentShinyCaptures);
+            nextShinyCaptures.add(pokemonState.pokemon.id);
+            return nextShinyCaptures;
+          });
+        }
+      } else {
+        playIncorrectBuzz();
+      }
+      setGameStats((currentStats) => {
+        if (!isCorrect) {
+          return { ...currentStats, streak: 0 };
+        }
 
-      return {
-        score: currentStats.score + roundPoints * nextStreak,
-        streak: nextStreak,
-        correctAnswers: currentStats.correctAnswers + 1,
-      };
-    });
-  }, [confettiLevel, isGamePaused, isShinyRound, pokemonState, roundSecondsRemaining]);
+        const nextStreak = currentStats.streak + 1;
+
+        return {
+          score: currentStats.score + roundPoints * nextStreak,
+          streak: nextStreak,
+          correctAnswers: currentStats.correctAnswers + 1,
+        };
+      });
+    },
+    [
+      confettiLevel,
+      isGamePaused,
+      isShinyRound,
+      pokemonState,
+      roundSecondsRemaining,
+    ],
+  );
   const buyExtraTime = () => {
     if (
       hasBoughtExtraTime ||
@@ -3586,7 +6264,9 @@ function App() {
       score: currentStats.score - SKIP_POKEMON_COST,
       streak: 0,
     }));
-    setWalletRewardMessage(`Skipped this Pokémon for ${SKIP_POKEMON_COST} points.`);
+    setWalletRewardMessage(
+      `Skipped this Pokémon for ${SKIP_POKEMON_COST} points.`,
+    );
     startNewRound();
   };
   const buyConfettiUpgrade = () => {
@@ -3615,12 +6295,22 @@ function App() {
     });
   };
   const buyNameRevealUpgrade = () => {
-    if (nameRevealLevel >= NAME_REVEAL_MAX_LEVEL || gameStats.score < NAME_REVEAL_UPGRADE_COST) return;
-    setGameStats((currentStats) => ({ ...currentStats, score: currentStats.score - NAME_REVEAL_UPGRADE_COST }));
+    if (
+      nameRevealLevel >= NAME_REVEAL_MAX_LEVEL ||
+      gameStats.score < NAME_REVEAL_UPGRADE_COST
+    )
+      return;
+    setGameStats((currentStats) => ({
+      ...currentStats,
+      score: currentStats.score - NAME_REVEAL_UPGRADE_COST,
+    }));
     setNameRevealLevel((currentLevel) => currentLevel + 1);
   };
   const buyOrEquipSkin = (skinId: PokedexSkinId) => {
-    if (ownedSkins.has(skinId)) { setEquippedSkin(skinId); return; }
+    if (ownedSkins.has(skinId)) {
+      setEquippedSkin(skinId);
+      return;
+    }
     const skin = POKEDEX_SKIN_BY_ID.get(skinId);
     if (!skin) return;
     const cost = SKIN_PURCHASE_COSTS[skin.rarity];
@@ -3631,11 +6321,16 @@ function App() {
   };
   const buyUncaughtRadar = () => {
     if (hasUncaughtRadar || gameStats.score < UNCAUGHT_RADAR_COST) return;
-    setGameStats((stats) => ({ ...stats, score: stats.score - UNCAUGHT_RADAR_COST }));
+    setGameStats((stats) => ({
+      ...stats,
+      score: stats.score - UNCAUGHT_RADAR_COST,
+    }));
     setHasUncaughtRadar(true);
   };
   const selectedVoicePokemonCandidates = useMemo(() => {
-    const selectedIds = new Set(getPokemonIdsForGenerations(selectedGenerations));
+    const selectedIds = new Set(
+      getPokemonIdsForGenerations(selectedGenerations),
+    );
     return voicePokemonIndex.filter((pokemon) => selectedIds.has(pokemon.id));
   }, [selectedGenerations, voicePokemonIndex]);
   const canListenForVoiceGuess =
@@ -3646,7 +6341,8 @@ function App() {
     isIntroComplete &&
     isCryComplete;
   const startVoiceGuess = useCallback(() => {
-    const Recognition = window.SpeechRecognition ?? window.webkitSpeechRecognition;
+    const Recognition =
+      window.SpeechRecognition ?? window.webkitSpeechRecognition;
 
     if (!Recognition) {
       setVoiceStatus("unsupported");
@@ -3681,7 +6377,9 @@ function App() {
 
         if (!match) {
           setVoiceStatus("listening");
-          setVoiceMessage(`Heard “${transcript}”. Try saying a Pokemon name again.`);
+          setVoiceMessage(
+            `Heard “${transcript}”. Try saying a Pokemon name again.`,
+          );
           return;
         }
 
@@ -3752,7 +6450,9 @@ function App() {
       recognitionRef.current = null;
       const showWaitingState = window.setTimeout(() => {
         setVoiceStatus("waiting");
-        setVoiceMessage("Now you wait — the Pokemon intro and cry are playing.");
+        setVoiceMessage(
+          "Now you wait — the Pokemon intro and cry are playing.",
+        );
       }, 0);
       return () => window.clearTimeout(showWaitingState);
     }
@@ -3788,15 +6488,15 @@ function App() {
   ).length;
   const capturedPokemonPercentage =
     (selectedCapturedPokemonCount / selectedPokemonIds.length) * 100;
-  const equippedSkinDefinition = POKEDEX_SKIN_BY_ID.get(equippedSkin) ?? POKEDEX_SKIN_BY_ID.get("classic")!;
+  const equippedSkinDefinition =
+    POKEDEX_SKIN_BY_ID.get(equippedSkin) ?? POKEDEX_SKIN_BY_ID.get("classic")!;
   const selectedGenerationLabel = GAME_GENERATIONS.filter((generation) =>
     selectedGenerations.includes(generation.id),
   )
     .map((generation) => generation.label)
     .join(" + ");
   const timedRevealAmount =
-    mode === "game" &&
-    roundResult === "guessing"
+    mode === "game" && roundResult === "guessing"
       ? (ROUND_TIME_LIMIT_SECONDS - roundSecondsRemaining) /
         ROUND_TIME_LIMIT_SECONDS
       : 0;
@@ -3813,9 +6513,9 @@ function App() {
             : nameRevealLevel === 0
               ? 0
               : Math.min(
-                pokemonState.pokemon.name.replace(/[^a-z]/gi, "").length - 1,
-                Math.max(0, roundElapsedSeconds - 10),
-              ),
+                  pokemonState.pokemon.name.replace(/[^a-z]/gi, "").length - 1,
+                  Math.max(0, roundElapsedSeconds - 10),
+                ),
         )
       : "";
 
@@ -3829,431 +6529,528 @@ function App() {
       {showShinyCelebration ? (
         <div aria-hidden="true" className="shiny-fireworks">
           {Array.from({ length: 42 }, (_, index) => (
-            <span key={index} style={{ "--firework-index": index } as CSSProperties} />
+            <span
+              key={index}
+              style={{ "--firework-index": index } as CSSProperties}
+            />
           ))}
         </div>
       ) : null}
       {isShinyRound && isGameRoundRevealed ? (
         <div aria-hidden="true" className="shiny-orbit">
-          {Array.from({ length: 8 }, (_, index) => <span key={index} />)}
+          {Array.from({ length: 8 }, (_, index) => (
+            <span key={index} />
+          ))}
         </div>
       ) : null}
       <main
         className={`pokedex-app skin-${equippedSkin}${showShinyCelebration ? " is-shaking" : ""}`}
-        style={{
-          "--skin-hue": equippedSkinDefinition.hue,
-          "--skin-saturation": `${equippedSkinDefinition.saturation}%`,
-          "--skin-lightness": `${equippedSkinDefinition.lightness}%`,
-        } as CSSProperties}
+        style={
+          {
+            "--skin-hue": equippedSkinDefinition.hue,
+            "--skin-saturation": `${equippedSkinDefinition.saturation}%`,
+            "--skin-lightness": `${equippedSkinDefinition.lightness}%`,
+          } as CSSProperties
+        }
       >
-      <section className="viewer-shell" aria-label="Interactive Pokedex model">
-        <Canvas shadows camera={VIEWER_CAMERA}>
-          <color attach="background" args={[isNightEnvironment ? "#141b36" : "#8fc8ec"]} />
-          <ambientLight intensity={isNightEnvironment ? 0.75 : 1.35} />
-          <directionalLight
-            castShadow
-            color={isNightEnvironment ? "#efab72" : "#ffffff"}
-            position={isNightEnvironment ? [-5, 1, 3] : [4, 4, 3]}
-            intensity={isNightEnvironment ? 1.8 : 2.4}
-          />
-          <directionalLight
-            color={isNightEnvironment ? "#6f89d9" : "#ffffff"}
-            position={[-3, 2, -4]}
-            intensity={isNightEnvironment ? 0.65 : 0.9}
-          />
-          <Suspense fallback={null}>
-            {settledConfetti.map((burst) => (
-              <WorldConfetti
-                key={`settled-confetti-${burst.id}`}
-                level={burst.level}
-                seed={burst.id}
-                settled
-              />
-            ))}
-            {showConfetti ? (
-              <WorldConfetti
-                key={`world-confetti-${confettiLevel}-${confettiEventId}`}
-                level={confettiLevel}
-                seed={confettiEventId}
-              />
-            ) : null}
-            <ScanEnvironment
-              animatedSpriteUrl={animatedSpriteUrl}
-              concealed={mode === "game" && !isGameRoundRevealed}
-              habitat={habitat}
-              isEvening={isEvening}
-              key={
-                `${mode === "game" && !isGameRoundRevealed ? "scan-target-silhouette" : "scan-target-visible"}-${animatedSpriteUrl ?? spriteUrl ?? "fallback"}`
-              }
-              spriteUrl={spriteUrl}
-              typeNames={typeNames}
+        <section
+          className="viewer-shell"
+          aria-label="Interactive Pokedex model"
+        >
+          <Canvas shadows camera={VIEWER_CAMERA}>
+            <color
+              attach="background"
+              args={[isNightEnvironment ? "#141b36" : "#8fc8ec"]}
             />
-            <PokedexModel
-              animatedSpriteUrl={animatedSpriteUrl}
-              concealed={isCurrentGamePokemonConcealed}
-              flavorText={flavorText}
-              revealAmount={silhouetteRevealAmount}
-              skin={equippedSkin}
-              showShinyIndicator={
-                isCurrentGamePokemonConcealed && isShinyRound
-              }
-              onDPadStep={
-                mode === "lookup" ? loadPokemonByOffset : () => startNewRound()
-              }
-              spriteUrl={spriteUrl}
-              typeNames={typeNames}
+            <ambientLight intensity={isNightEnvironment ? 0.75 : 1.35} />
+            <directionalLight
+              castShadow
+              color={isNightEnvironment ? "#efab72" : "#ffffff"}
+              position={isNightEnvironment ? [-5, 1, 3] : [4, 4, 3]}
+              intensity={isNightEnvironment ? 1.8 : 2.4}
             />
-            {companionPokemonId !== null ? <CompanionPokemon pokemonId={companionPokemonId} shiny={shinyCapturedPokemonIds.has(companionPokemonId)} /> : null}
-          </Suspense>
-          <OrbitControls
-            enablePan={true}
-            maxDistance={16.5}
-            maxPolarAngle={Math.PI / 2}
-            minDistance={2.5}
-            minPolarAngle={Math.PI / 4}
-            target={VIEWER_ORBIT_TARGET}
-          />
-        </Canvas>
-      </section>
-
-      <section className="control-panel" aria-label="Pokedex controls">
-        <div className="mode-switch" aria-label="Pokedex mode">
-          <button
-            aria-pressed={mode === "lookup"}
-            onClick={() => switchMode("lookup")}
-            type="button"
-          >
-            Pokedex
-          </button>
-          <button
-            aria-pressed={mode === "game"}
-            onClick={() => switchMode("game")}
-            type="button"
-          >
-            Who's That Pokemon?
-          </button>
-        </div>
-
-        <div>
-          <p className="eyebrow">
-            {mode === "game"
-              ? `${selectedGenerationLabel} guessing game`
-              : "Three.js Pokedex POC"}
-          </p>
-          <h1>{pokemonLabel}</h1>
-          {pokemonState.status === "error" ? (
-            <p className="status error">{pokemonState.error}</p>
-          ) : mode === "game" ? (
-            <>
-              <p
-                aria-live="polite"
-                className={`status game-result ${roundResult}`}
-              >
-                {roundResult === "correct" && pokemonState.status === "ready"
-                  ? `Correct! It's ${formatPokemonName(pokemonState.pokemon.name)}. +${Math.ceil(
-                      (MAX_ROUND_POINTS * roundSecondsRemaining) /
-                        ROUND_TIME_LIMIT_SECONDS,
-                    ) * (isShinyRound ? 2 : 1)}${isShinyRound ? " shiny bonus points!" : " points."}`
-                  : roundResult === "incorrect" &&
-                      pokemonState.status === "ready"
-                    ? `Not quite. It's ${formatPokemonName(pokemonState.pokemon.name)}.`
-                    : roundResult === "timed-out" &&
-                        pokemonState.status === "ready"
-                      ? `Time's up! It was ${formatPokemonName(pokemonState.pokemon.name)}. No points this round.`
-                    : "Listen to the cry, then name the Pokemon hiding on the Pokedex screen."}
-                {nextRoundSeconds !== null
-                  ? ` Next round in ${nextRoundSeconds}s.`
-                  : ""}
-              </p>
-              <dl className="game-stats" aria-label="Current game session score">
-                <div>
-                  <dt>Score</dt>
-                  <dd>{gameStats.score}</dd>
-                </div>
-                <div>
-                  <dt>Streak</dt>
-                  <dd>{gameStats.streak}</dd>
-                </div>
-                <div>
-                  <dt>Correct</dt>
-                  <dd>{gameStats.correctAnswers}</dd>
-                </div>
-                <div>
-                  <dt>Time</dt>
-                  <dd>{isGameRoundRevealed ? "—" : `${roundSecondsRemaining}s`}</dd>
-                </div>
-              </dl>
-              <button className="hint-button" onClick={() => setIsGamePaused((paused) => !paused)} type="button">
-                {isGamePaused ? "Resume round" : "Pause round"}
-              </button>
-              <button
-                aria-label={isIntroMuted ? "Unmute Who's That Pokemon intro" : "Mute Who's That Pokemon intro"}
-                aria-pressed={isIntroMuted}
-                className="hint-button"
-                onClick={() => setIsIntroMuted((muted) => !muted)}
-                type="button"
-              >
-                {isIntroMuted ? "Unmute intro" : "Mute intro"}
-              </button>
-              {isGamePaused ? <p className="wallet-reward">Round paused — timer and guesses are frozen.</p> : null}
-              {walletRewardMessage ? (
-                <p aria-live="polite" className="wallet-reward">
-                  {walletRewardMessage}
-                </p>
+            <directionalLight
+              color={isNightEnvironment ? "#6f89d9" : "#ffffff"}
+              position={[-3, 2, -4]}
+              intensity={isNightEnvironment ? 0.65 : 0.9}
+            />
+            <Suspense fallback={null}>
+              {settledConfetti.map((burst) => (
+                <WorldConfetti
+                  key={`settled-confetti-${burst.id}`}
+                  level={burst.level}
+                  seed={burst.id}
+                  settled
+                />
+              ))}
+              {showConfetti ? (
+                <WorldConfetti
+                  key={`world-confetti-${confettiLevel}-${confettiEventId}`}
+                  level={confettiLevel}
+                  seed={confettiEventId}
+                />
               ) : null}
-              <fieldset className="generation-picker">
-                <legend>Generations — applies next round</legend>
-                <div className="generation-picker-options">
-                  {GAME_GENERATIONS.map((generation) => {
-                    const isSelected = selectedGenerations.includes(generation.id);
-                    const isOnlySelection =
-                      isSelected && selectedGenerations.length === 1;
+              <ScanEnvironment
+                animatedSpriteUrl={animatedSpriteUrl}
+                concealed={mode === "game" && !isGameRoundRevealed}
+                habitat={habitat}
+                isEvening={isEvening}
+                key={`${mode === "game" && !isGameRoundRevealed ? "scan-target-silhouette" : "scan-target-visible"}-${animatedSpriteUrl ?? spriteUrl ?? "fallback"}`}
+                spriteUrl={spriteUrl}
+                typeNames={typeNames}
+              />
+              <PokedexModel
+                animatedSpriteUrl={animatedSpriteUrl}
+                concealed={isCurrentGamePokemonConcealed}
+                flavorText={flavorText}
+                revealAmount={silhouetteRevealAmount}
+                skin={equippedSkin}
+                showShinyIndicator={
+                  isCurrentGamePokemonConcealed && isShinyRound
+                }
+                onDPadStep={
+                  mode === "lookup"
+                    ? loadPokemonByOffset
+                    : () => startNewRound()
+                }
+                spriteUrl={spriteUrl}
+                typeNames={typeNames}
+              />
+              {companionPokemonId !== null ? (
+                <CompanionPokemon
+                  pokemonId={companionPokemonId}
+                  shiny={shinyCapturedPokemonIds.has(companionPokemonId)}
+                />
+              ) : null}
+            </Suspense>
+            <OrbitControls
+              enablePan={true}
+              maxDistance={16.5}
+              maxPolarAngle={Math.PI / 2}
+              minDistance={2.5}
+              minPolarAngle={Math.PI / 4}
+              target={VIEWER_ORBIT_TARGET}
+            />
+          </Canvas>
+        </section>
 
-                    return (
-                      <button
-                        aria-pressed={isSelected}
-                        disabled={isOnlySelection}
-                        key={generation.id}
-                        onClick={() => toggleGeneration(generation.id)}
-                        type="button"
-                      >
-                        {generation.label.replace("Gen ", "")}
-                      </button>
-                    );
-                  })}
-                </div>
-              </fieldset>
-              <div className="game-utilities">
-                <button className="hint-button" disabled={hasUncaughtRadar || gameStats.score < UNCAUGHT_RADAR_COST} onClick={buyUncaughtRadar} type="button">{hasUncaughtRadar ? "Uncaught Radar active" : `Buy Uncaught Radar (${UNCAUGHT_RADAR_COST} pts)`}</button>
-                <div className="skin-shop" aria-label="Pokedex skin shop">
-                  <div className="skin-shop-heading">
-                    <strong>Pokédex skin collection</strong>
-                    <span>{ownedSkins.size} / {POKEDEX_SKINS.length} unlocked</span>
+        <section className="control-panel" aria-label="Pokedex controls">
+          <div className="mode-switch" aria-label="Pokedex mode">
+            <button
+              aria-pressed={mode === "lookup"}
+              onClick={() => switchMode("lookup")}
+              type="button"
+            >
+              Pokedex
+            </button>
+            <button
+              aria-pressed={mode === "game"}
+              onClick={() => switchMode("game")}
+              type="button"
+            >
+              Who's That Pokemon?
+            </button>
+          </div>
+
+          <div className="round-status">
+            <p className="eyebrow">
+              {mode === "game"
+                ? `${selectedGenerationLabel} guessing game`
+                : "Three.js Pokedex POC"}
+            </p>
+            {/* While a game-mode Pokemon is concealed, "Mystery Pokemon" added
+                a full title line without telling the player anything —
+                dropped to keep this compact, especially on mobile where
+                every line pushes the guess input further down. */}
+            {isCurrentGamePokemonConcealed ? null : <h1>{pokemonLabel}</h1>}
+            {pokemonState.status === "error" ? (
+              <p className="status error">{pokemonState.error}</p>
+            ) : mode === "game" ? (
+              <>
+                <p
+                  aria-live="polite"
+                  className={`status game-result ${roundResult}`}
+                >
+                  {roundResult === "correct" && pokemonState.status === "ready"
+                    ? lastRoundOutcome?.fuzzy
+                      ? `Close enough! It's ${formatPokemonName(pokemonState.pokemon.name)}. +${lastRoundOutcome.points} points (half credit for the typo).`
+                      : `Correct! It's ${formatPokemonName(pokemonState.pokemon.name)}. +${lastRoundOutcome?.points ?? 0}${isShinyRound ? " shiny bonus points!" : " points."}`
+                    : roundResult === "incorrect" &&
+                        pokemonState.status === "ready"
+                      ? `Not quite. It's ${formatPokemonName(pokemonState.pokemon.name)}.`
+                      : roundResult === "timed-out" &&
+                          pokemonState.status === "ready"
+                        ? `Time's up! It was ${formatPokemonName(pokemonState.pokemon.name)}. No points this round.`
+                        : ""}
+                  {nextRoundSeconds !== null
+                    ? ` Next round in ${nextRoundSeconds}s.`
+                    : ""}
+                </p>
+                <dl
+                  className="game-stats"
+                  aria-label="Current game session score"
+                >
+                  <div>
+                    <dt>Score</dt>
+                    <dd>{gameStats.score}</dd>
                   </div>
-                  <div aria-label={`${ownedSkins.size} of ${POKEDEX_SKINS.length} skins unlocked`} className="skin-progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={POKEDEX_SKINS.length} aria-valuenow={ownedSkins.size}>
-                    <span style={{ width: `${(ownedSkins.size / POKEDEX_SKINS.length) * 100}%` }} />
+                  <div>
+                    <dt>Streak</dt>
+                    <dd>{gameStats.streak}</dd>
                   </div>
-                  <p className="skin-shop-copy">Win correct rounds for weighted drops, or buy skins by rarity. Legendary skins cost {LEGENDARY_SKIN_COST} points.</p>
-                  <details className="skin-catalog">
-                    <summary>Browse all {POKEDEX_SKINS.length} skins</summary>
-                    <div className="skin-grid">
-                      {POKEDEX_SKINS.map((skin) => {
-                        const owned = ownedSkins.has(skin.id);
-                        const cost = SKIN_PURCHASE_COSTS[skin.rarity];
-                        return <button aria-pressed={equippedSkin === skin.id} className={`skin-card rarity-${skin.rarity.toLowerCase()}${equippedSkin === skin.id ? " is-equipped" : ""}`} disabled={!owned && gameStats.score < cost} key={skin.id} onClick={() => buyOrEquipSkin(skin.id)} type="button">
-                          <span className="skin-swatch" style={{ background: `hsl(${skin.hue} ${skin.saturation}% ${skin.lightness}%)` }} />
-                          <span className="skin-card-name">{skin.label}</span>
-                          <span className="skin-rarity">{skin.rarity}</span>
-                          <span className="skin-card-action">{equippedSkin === skin.id ? "Equipped" : owned ? "Equip" : `${cost} pts`}</span>
-                        </button>;
-                      })}
-                    </div>
-                  </details>
-                </div>
+                  <div>
+                    <dt>Correct</dt>
+                    <dd>{gameStats.correctAnswers}</dd>
+                  </div>
+                  <div>
+                    <dt>Time</dt>
+                    <dd>
+                      {isGameRoundRevealed ? "—" : `${roundSecondsRemaining}s`}
+                    </dd>
+                  </div>
+                </dl>
                 <button
-                  aria-haspopup="dialog"
-                  aria-label={`Open captured Pokemon collection. ${selectedCapturedPokemonCount} of ${selectedPokemonIds.length} selected Pokemon caught, ${capturedPokemonCount} caught overall.`}
-                  className="capture-progress"
-                  onClick={() => setIsCollectionOpen(true)}
+                  className="hint-button"
+                  onClick={() => setIsGamePaused((paused) => !paused)}
                   type="button"
                 >
-                  <div className="capture-progress-heading">
-                    <span>Pokédex captured</span>
-                    <strong>
-                      {selectedCapturedPokemonCount} / {selectedPokemonIds.length}
-                    </strong>
+                  {isGamePaused ? "Resume round" : "Pause round"}
+                </button>
+                <button
+                  aria-label={
+                    isIntroMuted
+                      ? "Unmute Who's That Pokemon intro"
+                      : "Mute Who's That Pokemon intro"
+                  }
+                  aria-pressed={isIntroMuted}
+                  className="hint-button"
+                  onClick={() => setIsIntroMuted((muted) => !muted)}
+                  type="button"
+                >
+                  {isIntroMuted ? "Unmute intro" : "Mute intro"}
+                </button>
+                {isGamePaused ? (
+                  <p className="wallet-reward">
+                    Round paused — timer and guesses are frozen.
+                  </p>
+                ) : null}
+                {walletRewardMessage ? (
+                  <p aria-live="polite" className="wallet-reward">
+                    {walletRewardMessage}
+                  </p>
+                ) : null}
+                <fieldset className="generation-picker">
+                  <legend>Generations — applies next round</legend>
+                  <div className="generation-picker-options">
+                    {GAME_GENERATIONS.map((generation) => {
+                      const isSelected = selectedGenerations.includes(
+                        generation.id,
+                      );
+                      const isOnlySelection =
+                        isSelected && selectedGenerations.length === 1;
+
+                      return (
+                        <button
+                          aria-pressed={isSelected}
+                          disabled={isOnlySelection}
+                          key={generation.id}
+                          onClick={() => toggleGeneration(generation.id)}
+                          type="button"
+                        >
+                          {generation.label.replace("Gen ", "")}
+                        </button>
+                      );
+                    })}
                   </div>
-                  <div
-                    aria-valuemax={selectedPokemonIds.length}
-                    aria-valuemin={0}
-                    aria-valuenow={selectedCapturedPokemonCount}
-                    aria-valuetext={`${selectedCapturedPokemonCount} of ${selectedPokemonIds.length} selected Pokemon captured; ${capturedPokemonCount} total Pokemon captured`}
-                    className="capture-progress-track"
-                    role="progressbar"
+                </fieldset>
+                <div className="game-utilities">
+                  <button
+                    className="hint-button"
+                    disabled={
+                      hasUncaughtRadar || gameStats.score < UNCAUGHT_RADAR_COST
+                    }
+                    onClick={buyUncaughtRadar}
+                    type="button"
                   >
-                    <span
-                      className="capture-progress-fill"
-                      style={{ width: `${capturedPokemonPercentage}%` }}
-                    />
+                    {hasUncaughtRadar
+                      ? "Uncaught Radar active"
+                      : `Buy Uncaught Radar (${UNCAUGHT_RADAR_COST} pts)`}
+                  </button>
+                  <div className="skin-shop" aria-label="Pokedex skin shop">
+                    <div className="skin-shop-heading">
+                      <strong>Pokédex skin collection</strong>
+                      <span>
+                        {ownedSkins.size} / {POKEDEX_SKINS.length} unlocked
+                      </span>
+                    </div>
+                    <div
+                      aria-label={`${ownedSkins.size} of ${POKEDEX_SKINS.length} skins unlocked`}
+                      className="skin-progress-track"
+                      role="progressbar"
+                      aria-valuemin={0}
+                      aria-valuemax={POKEDEX_SKINS.length}
+                      aria-valuenow={ownedSkins.size}
+                    >
+                      <span
+                        style={{
+                          width: `${(ownedSkins.size / POKEDEX_SKINS.length) * 100}%`,
+                        }}
+                      />
+                    </div>
+                    <p className="skin-shop-copy">
+                      Win correct rounds for weighted drops, or buy skins by
+                      rarity. Legendary skins cost {LEGENDARY_SKIN_COST} points.
+                    </p>
+                    <details className="skin-catalog">
+                      <summary>Browse all {POKEDEX_SKINS.length} skins</summary>
+                      <div className="skin-grid">
+                        {POKEDEX_SKINS.map((skin) => {
+                          const owned = ownedSkins.has(skin.id);
+                          const cost = SKIN_PURCHASE_COSTS[skin.rarity];
+                          return (
+                            <button
+                              aria-pressed={equippedSkin === skin.id}
+                              className={`skin-card rarity-${skin.rarity.toLowerCase()}${equippedSkin === skin.id ? " is-equipped" : ""}`}
+                              disabled={!owned && gameStats.score < cost}
+                              key={skin.id}
+                              onClick={() => buyOrEquipSkin(skin.id)}
+                              type="button"
+                            >
+                              <span
+                                className="skin-swatch"
+                                style={{
+                                  background: `hsl(${skin.hue} ${skin.saturation}% ${skin.lightness}%)`,
+                                }}
+                              />
+                              <span className="skin-card-name">
+                                {skin.label}
+                              </span>
+                              <span className="skin-rarity">{skin.rarity}</span>
+                              <span className="skin-card-action">
+                                {equippedSkin === skin.id
+                                  ? "Equipped"
+                                  : owned
+                                    ? "Equip"
+                                    : `${cost} pts`}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </details>
                   </div>
-                </button>
-                <button
-                  className="hint-button"
-                  disabled={
-                    pokemonState.status !== "ready" ||
-                    isGameRoundRevealed ||
-                    isHintVisible
-                  }
-                  onClick={() => setIsHintVisible(true)}
-                  type="button"
-                >
-                  {isHintVisible ? "Free reveal used" : "Free hint: reveal 10%"}
-                </button>
-                <button
-                  className="hint-button"
-                  disabled={
-                    pokemonState.status !== "ready" ||
-                    isGameRoundRevealed ||
-                    gameStats.score < SKIP_POKEMON_COST
-                  }
-                  onClick={skipPokemon}
-                  type="button"
-                >
-                  Skip Pokémon ({SKIP_POKEMON_COST} pts)
-                </button>
-                <button
-                  className="hint-button"
-                  disabled={
-                    nameRevealLevel >= NAME_REVEAL_MAX_LEVEL ||
-                    gameStats.score < NAME_REVEAL_UPGRADE_COST
-                  }
-                  onClick={buyNameRevealUpgrade}
-                  type="button"
-                >
-                  {nameRevealLevel >= NAME_REVEAL_MAX_LEVEL
-                    ? "Name reveal maxed"
-                    : `Name reveal Lv. ${nameRevealLevel} → ${nameRevealLevel + 1} (${NAME_REVEAL_UPGRADE_COST} pts)`}
-                </button>
-                <button
-                  className="hint-button"
-                  disabled={
-                    pokemonState.status !== "ready" ||
-                    isGameRoundRevealed ||
-                    hasBoughtExtraTime ||
-                    gameStats.score < EXTRA_TIME_HINT_COST
-                  }
-                  onClick={buyExtraTime}
-                  type="button"
-                >
-                  {hasBoughtExtraTime
-                    ? `+${EXTRA_TIME_SECONDS}s used`
-                    : `Buy +${EXTRA_TIME_SECONDS}s (${EXTRA_TIME_HINT_COST} pts)`}
-                </button>
-                <button
-                  className="hint-button"
-                  disabled={
-                    confettiLevel >= CONFETTI_MAX_LEVEL ||
-                    gameStats.score < CONFETTI_UPGRADE_COST
-                  }
-                  onClick={buyConfettiUpgrade}
-                  type="button"
-                >
-                  {confettiLevel >= CONFETTI_MAX_LEVEL
-                    ? "Confetti maxed (1000)"
-                    : `Confetti Lv. ${confettiLevel} → ${confettiLevel + 1} (${CONFETTI_UPGRADE_COST} pts)`}
-                </button>
-              </div>
-              <p aria-live="polite" className="first-letter-hint">
-                Name reveal: <strong>{maskedPokemonName}</strong>
+                  <button
+                    aria-haspopup="dialog"
+                    aria-label={`Open captured Pokemon collection. ${selectedCapturedPokemonCount} of ${selectedPokemonIds.length} selected Pokemon caught, ${capturedPokemonCount} caught overall.`}
+                    className="capture-progress"
+                    onClick={() => setIsCollectionOpen(true)}
+                    type="button"
+                  >
+                    <div className="capture-progress-heading">
+                      <span>Pokédex captured</span>
+                      <strong>
+                        {selectedCapturedPokemonCount} /{" "}
+                        {selectedPokemonIds.length}
+                      </strong>
+                    </div>
+                    <div
+                      aria-valuemax={selectedPokemonIds.length}
+                      aria-valuemin={0}
+                      aria-valuenow={selectedCapturedPokemonCount}
+                      aria-valuetext={`${selectedCapturedPokemonCount} of ${selectedPokemonIds.length} selected Pokemon captured; ${capturedPokemonCount} total Pokemon captured`}
+                      className="capture-progress-track"
+                      role="progressbar"
+                    >
+                      <span
+                        className="capture-progress-fill"
+                        style={{ width: `${capturedPokemonPercentage}%` }}
+                      />
+                    </div>
+                  </button>
+                  <button
+                    className="hint-button"
+                    disabled={
+                      pokemonState.status !== "ready" ||
+                      isGameRoundRevealed ||
+                      isHintVisible
+                    }
+                    onClick={() => setIsHintVisible(true)}
+                    type="button"
+                  >
+                    {isHintVisible
+                      ? "Free reveal used"
+                      : "Free hint: reveal 10%"}
+                  </button>
+                  <button
+                    className="hint-button"
+                    disabled={
+                      pokemonState.status !== "ready" ||
+                      isGameRoundRevealed ||
+                      gameStats.score < SKIP_POKEMON_COST
+                    }
+                    onClick={skipPokemon}
+                    type="button"
+                  >
+                    Skip Pokémon ({SKIP_POKEMON_COST} pts)
+                  </button>
+                  <button
+                    className="hint-button"
+                    disabled={
+                      nameRevealLevel >= NAME_REVEAL_MAX_LEVEL ||
+                      gameStats.score < NAME_REVEAL_UPGRADE_COST
+                    }
+                    onClick={buyNameRevealUpgrade}
+                    type="button"
+                  >
+                    {nameRevealLevel >= NAME_REVEAL_MAX_LEVEL
+                      ? "Name reveal maxed"
+                      : `Name reveal Lv. ${nameRevealLevel} → ${nameRevealLevel + 1} (${NAME_REVEAL_UPGRADE_COST} pts)`}
+                  </button>
+                  <button
+                    className="hint-button"
+                    disabled={
+                      pokemonState.status !== "ready" ||
+                      isGameRoundRevealed ||
+                      hasBoughtExtraTime ||
+                      gameStats.score < EXTRA_TIME_HINT_COST
+                    }
+                    onClick={buyExtraTime}
+                    type="button"
+                  >
+                    {hasBoughtExtraTime
+                      ? `+${EXTRA_TIME_SECONDS}s used`
+                      : `Buy +${EXTRA_TIME_SECONDS}s (${EXTRA_TIME_HINT_COST} pts)`}
+                  </button>
+                  <button
+                    className="hint-button"
+                    disabled={
+                      confettiLevel >= CONFETTI_MAX_LEVEL ||
+                      gameStats.score < CONFETTI_UPGRADE_COST
+                    }
+                    onClick={buyConfettiUpgrade}
+                    type="button"
+                  >
+                    {confettiLevel >= CONFETTI_MAX_LEVEL
+                      ? "Confetti maxed (1000)"
+                      : `Confetti Lv. ${confettiLevel} → ${confettiLevel + 1} (${CONFETTI_UPGRADE_COST} pts)`}
+                  </button>
+                </div>
+                <p aria-live="polite" className="first-letter-hint">
+                  Name reveal: <strong>{maskedPokemonName}</strong>
+                </p>
+              </>
+            ) : (
+              <p className="status">
+                Sprite fetched from PokeAPI and rendered on the model display.
               </p>
+            )}
+          </div>
+
+          {mode === "lookup" ? (
+            <>
+              <form
+                className="lookup-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  const normalizedQuery = normalizePokemonName(query);
+                  const prefixMatch = voicePokemonIndex.find((candidate) =>
+                    normalizePokemonName(candidate.name).startsWith(
+                      normalizedQuery,
+                    ),
+                  );
+                  const fuzzyMatch = findVoicePokemonMatch(
+                    query,
+                    voicePokemonIndex,
+                  );
+                  setSubmittedQuery(
+                    prefixMatch?.name ?? fuzzyMatch?.name ?? query,
+                  );
+                }}
+              >
+                <label htmlFor="pokemon-query">Pokemon</label>
+                <div className="lookup-row">
+                  <input
+                    id="pokemon-query"
+                    name="pokemon"
+                    onChange={(event) => setQuery(event.target.value)}
+                    placeholder="pikachu or 25"
+                    spellCheck="false"
+                    value={query}
+                  />
+                  <button type="submit">Load</button>
+                </div>
+              </form>
+              <PokemonScanner onScan={loadScannedPokemon} />
             </>
           ) : (
-            <p className="status">
-              Sprite fetched from PokeAPI and rendered on the model display.
-            </p>
-          )}
-        </div>
-
-        {mode === "lookup" ? (
-          <>
             <form
               className="lookup-form"
               onSubmit={(event) => {
                 event.preventDefault();
-                const normalizedQuery = normalizePokemonName(query);
-                const prefixMatch = voicePokemonIndex.find((candidate) =>
-                  normalizePokemonName(candidate.name).startsWith(normalizedQuery),
-                );
-                const fuzzyMatch = findVoicePokemonMatch(query, voicePokemonIndex);
-                setSubmittedQuery(prefixMatch?.name ?? fuzzyMatch?.name ?? query);
+
+                if (isGameRoundRevealed) {
+                  startNewRound();
+                  return;
+                }
+
+                submitGuess();
               }}
             >
-              <label htmlFor="pokemon-query">Pokemon</label>
-              <div className="lookup-row">
-                <input
-                  id="pokemon-query"
-                  name="pokemon"
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="pikachu or 25"
-                  spellCheck="false"
-                  value={query}
-                />
-                <button type="submit">Load</button>
-              </div>
-            </form>
-            <PokemonScanner onScan={loadScannedPokemon} />
-          </>
-        ) : (
-          <form
-            className="lookup-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-
-              if (isGameRoundRevealed) {
-                startNewRound();
-                return;
-              }
-
-              submitGuess();
-            }}
-          >
               <label htmlFor="pokemon-guess">Your guess</label>
               <div className="lookup-row">
-              <input
-                autoComplete="off"
-                disabled={
-                  pokemonState.status !== "ready" || isGameRoundRevealed
-                }
-                id="pokemon-guess"
-                name="guess"
-                onChange={(event) => {
-                  const nextGuess = event.target.value;
-                  setGuess(nextGuess);
-                  guessRef.current = nextGuess;
-                }}
-                placeholder="Who's that Pokemon?"
-                ref={guessInputRef}
-                spellCheck="false"
-                value={guess}
-              />
-              <button
-                disabled={
-                  pokemonState.status !== "ready" ||
-                  (!isGameRoundRevealed && !guess.trim())
-                }
-                type="submit"
-              >
-                {isGameRoundRevealed
-                  ? `Next (${nextRoundSeconds ?? NEXT_ROUND_DELAY_SECONDS}s)`
-                  : "Guess"}
-              </button>
-            </div>
-            <div className="voice-guess-controls">
-              <button
-                aria-pressed={voiceEnabled}
-                className="voice-guess-button"
-                disabled={
-                  pokemonState.status !== "ready"
-                }
-                onClick={toggleVoiceGuess}
-                type="button"
-              >
-                {voiceEnabled
-                  ? voiceStatus === "listening"
-                    ? "Stop listening"
-                    : "Stop voice guesses"
-                  : "Listen"}
-              </button>
-              <span aria-live="polite" className="voice-guess-status">
-                {voiceMessage ||
-                  (voiceEnabled
-                    ? "Now you wait — listening resumes after the intro and cry."
-                    : "Listen once, then say a Pokemon name each round.")}
-              </span>
-            </div>
-          </form>
-        )}
-      </section>
+                <input
+                  autoComplete="off"
+                  disabled={
+                    pokemonState.status !== "ready" || isGameRoundRevealed
+                  }
+                  id="pokemon-guess"
+                  name="guess"
+                  onChange={(event) => {
+                    const nextGuess = event.target.value;
+                    setGuess(nextGuess);
+                    guessRef.current = nextGuess;
+                  }}
+                  placeholder="Who's that Pokemon?"
+                  ref={guessInputRef}
+                  spellCheck="false"
+                  value={guess}
+                />
+                <button
+                  disabled={
+                    pokemonState.status !== "ready" ||
+                    (!isGameRoundRevealed && !guess.trim())
+                  }
+                  type="submit"
+                >
+                  {isGameRoundRevealed
+                    ? `Next (${nextRoundSeconds ?? NEXT_ROUND_DELAY_SECONDS}s)`
+                    : "Guess"}
+                </button>
+              </div>
+              <div className="voice-guess-controls">
+                <button
+                  aria-pressed={voiceEnabled}
+                  className="voice-guess-button"
+                  disabled={pokemonState.status !== "ready"}
+                  onClick={toggleVoiceGuess}
+                  type="button"
+                >
+                  {voiceEnabled
+                    ? voiceStatus === "listening"
+                      ? "Stop listening"
+                      : "Stop voice guesses"
+                    : "Listen"}
+                </button>
+                <span aria-live="polite" className="voice-guess-status">
+                  {voiceMessage ||
+                    (voiceEnabled
+                      ? "Now you wait — listening resumes after the intro and cry."
+                      : "Listen once, then say a Pokemon name each round.")}
+                </span>
+              </div>
+            </form>
+          )}
+        </section>
       </main>
       {isCollectionOpen ? (
         <CapturedPokemonCollection

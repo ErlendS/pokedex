@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatPokemonName, getAnimatedShinySpriteUrl, getAnimatedSpriteUrl, getPokemonQueryFromScan, getShinySpriteUrl, getSpriteUrl, normalizePokemonName } from "./pokemon";
+import { formatPokemonName, getAnimatedShinySpriteUrl, getAnimatedSpriteUrl, getNameSimilarity, getPokemonQueryFromScan, getShinySpriteUrl, getSpriteUrl, normalizePokemonName } from "./pokemon";
 
 describe("Pokemon utilities", () => {
   it("accepts direct and PokeAPI scan values", () => {
@@ -19,5 +19,13 @@ describe("Pokemon utilities", () => {
     expect(getAnimatedSpriteUrl(25)).toContain("/25.gif");
     expect(getShinySpriteUrl(25)).toContain("/shiny/25.png");
     expect(getAnimatedShinySpriteUrl(25)).toContain("/shiny/25.gif");
+  });
+
+  it("scores name similarity for fuzzy guess matching", () => {
+    expect(getNameSimilarity("pikachu", "pikachu")).toBe(1);
+    expect(getNameSimilarity("", "")).toBe(1);
+    expect(getNameSimilarity("charizard", "charlzard")).toBeGreaterThanOrEqual(0.85);
+    expect(getNameSimilarity("pikachu", "pikahcu")).toBeGreaterThanOrEqual(0.7);
+    expect(getNameSimilarity("pikachu", "bulbasaur")).toBeLessThan(0.5);
   });
 });

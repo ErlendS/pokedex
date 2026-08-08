@@ -1096,6 +1096,17 @@
     font-size: 28px;
   }
 
+  /* The guess/search input is the one thing a player needs immediately —
+     push it up above the score/stats/upgrade-shop block (which has no
+     size limit and can run long) so it's visible without scrolling. */
+  .round-status {
+    order: 1;
+  }
+
+  .lookup-form {
+    order: 0;
+  }
+
   .scanner-dialog {
     padding: 20px;
   }
