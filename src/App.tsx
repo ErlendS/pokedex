@@ -2107,6 +2107,7 @@ function AuroraRiverBand({
     return geo;
   }, [amplitude, length, width]);
 
+  const textureRef = useRef<CanvasTexture | null>(null);
   const texture = useMemo(() => {
     const canvas = document.createElement("canvas");
     canvas.width = 256;
@@ -2129,8 +2130,13 @@ function AuroraRiverBand({
     return map;
   }, [baseColor, midColor, tipColor]);
 
+  useEffect(() => {
+    textureRef.current = texture;
+  }, [texture]);
+
   useFrame((_, delta) => {
-    if (texture) texture.offset.x -= delta * speed;
+    const map = textureRef.current;
+    if (map) map.offset.x -= delta * speed;
   });
 
   return (
@@ -5057,6 +5063,7 @@ type DecodedSpriteFrame = { durationMs: number; image: VideoFrame };
 
 function useSpriteTexture(url: string | null, onError?: () => void) {
   const [texture, setTexture] = useState<CanvasTexture | null>(null);
+  const textureRef = useRef<CanvasTexture | null>(null);
   const [aspect, setAspect] = useState(1);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const framesRef = useRef<DecodedSpriteFrame[]>([]);
@@ -5069,11 +5076,29 @@ function useSpriteTexture(url: string | null, onError?: () => void) {
   const cursorFrameEndMsRef = useRef(0);
   const lastElapsedMsRef = useRef(0);
   const onErrorRef = useRef(onError);
-  onErrorRef.current = onError;
+  useEffect(() => {
+    onErrorRef.current = onError;
+  });
+
+  // Reset immediately (during render, not in an effect) whenever `url`
+  // changes to a falsy value, so a cleared sprite doesn't flash the
+  // previous texture for a frame before the effect below runs. The ref
+  // mirroring `texture` (for use in the useFrame loop) is kept in sync
+  // separately, outside of render, below.
+  const [prevUrl, setPrevUrl] = useState(url);
+  if (url !== prevUrl) {
+    setPrevUrl(url);
+    if (!url) {
+      setTexture(null);
+    }
+  }
+
+  useEffect(() => {
+    textureRef.current = texture;
+  }, [texture]);
 
   useEffect(() => {
     if (!url) {
-      setTexture(null);
       return;
     }
     let cancelled = false;
@@ -5186,7 +5211,8 @@ function useSpriteTexture(url: string | null, onError?: () => void) {
   useFrame(() => {
     const canvas = canvasRef.current;
     const frames = framesRef.current;
-    if (!canvas || !texture || frames.length === 0) return;
+    const map = textureRef.current;
+    if (!canvas || !map || frames.length === 0) return;
 
     const elapsedMs = (performance.now() - playbackStartRef.current) % totalDurationMsRef.current;
     // Amortized O(1): advance a cursor forward from wherever it already
@@ -5209,7 +5235,7 @@ function useSpriteTexture(url: string | null, onError?: () => void) {
     if (!context) return;
     context.clearRect(0, 0, canvas.width, canvas.height);
     context.drawImage(frames[frameIndex].image, 0, 0, canvas.width, canvas.height);
-    texture.needsUpdate = true;
+    map.needsUpdate = true;
   });
 
   return { aspect, texture };
@@ -6315,6 +6341,7 @@ function App() {
             error instanceof FetchStatusError
               ? "Pokemon not found."
               : "Couldn't reach PokeAPI. Check your connection and try again.",
+            { cause: error },
           );
         }
 
