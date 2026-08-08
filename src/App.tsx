@@ -260,7 +260,7 @@ const CONFETTI_DURATION_SECONDS = 5;
 const NAME_REVEAL_UPGRADE_COST = 150;
 const NAME_REVEAL_MAX_LEVEL = 10;
 const UNCAUGHT_RADAR_COST = 1_000;
-const SHINY_ROUND_CHANCE = 0.2;
+const SHINY_ROUND_CHANCE = 1 / 4_096;
 const APP_MODE_STORAGE_KEY = "pokedex:mode";
 const CAPTURED_POKEMON_STORAGE_KEY = "pokedex:captured-pokemon";
 const SHINY_CAPTURED_POKEMON_STORAGE_KEY = "pokedex:shiny-captured-pokemon";
@@ -2074,6 +2074,30 @@ const ScanEnvironment = memo(function ScanEnvironment({
     [-5.6, 0.3, 1.65], [-3.9, 0.58, 2.15], [-2.1, 0.18, 1.35],
   ];
   const hasMeadow = !scene.water && !isDesertBiome && !isVolcanicBiome;
+  const surroundingMountains = Array.from({ length: 20 }, (_, index) => {
+    const angle = (index / 20) * Math.PI * 2;
+    const radius = 34 + (index % 3) * 2.4;
+    const scale = 4.2 + ((index * 7) % 5) * 0.55;
+    return [
+      VIEWER_ORBIT_TARGET[0] + Math.cos(angle) * radius,
+      VIEWER_ORBIT_TARGET[2] + Math.sin(angle) * radius,
+      scale,
+    ] as const;
+  });
+  const surroundingTreeCount = denseForest ? 28 : 18;
+  const surroundingTrees = Array.from(
+    { length: surroundingTreeCount },
+    (_, index) => {
+      const angle = (index / surroundingTreeCount) * Math.PI * 2 + 0.12;
+      const radius = 19 + (index % 4) * 1.35;
+      const scale = 0.9 + ((index * 5) % 7) * 0.07;
+      return [
+        VIEWER_ORBIT_TARGET[0] + Math.cos(angle) * radius,
+        VIEWER_ORBIT_TARGET[2] + Math.sin(angle) * radius,
+        scale,
+      ] as const;
+    },
+  );
 
   return (
     <group>
@@ -2086,10 +2110,28 @@ const ScanEnvironment = memo(function ScanEnvironment({
       />
       <MoonlitSky />
       {isCalmNightBiome ? <Fireflies /> : null}
-      <mesh position={[0, -3.72, -9.2]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-        <planeGeometry args={[50, 48, 1, 1]} />
+      <mesh position={[VIEWER_ORBIT_TARGET[0], -3.72, VIEWER_ORBIT_TARGET[2]]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+        <planeGeometry args={[140, 140, 1, 1]} />
         <meshStandardMaterial color={scene.ground} roughness={1} />
       </mesh>
+      {hasDistantMountains ? surroundingMountains.map(([x, z, scale], index) => (
+        <mesh key={`surrounding-mountain-${index}`} position={[x, -1.4, z]} scale={[scale * 1.25, scale * 0.76, scale]}>
+          <coneGeometry args={[1, 1.8, 7]} />
+          <meshStandardMaterial
+            color={scene.snow ? "#b5d1dc" : isVolcanicBiome ? "#2e2529" : index % 2 ? "#53665c" : "#6b7768"}
+            flatShading
+            roughness={0.98}
+          />
+        </mesh>
+      )) : null}
+      {hasWindblownGrass ? surroundingTrees.map((tree, index) => (
+        <LandscapeTree
+          foliage={scene.foliage}
+          index={trees.length + index}
+          key={`surrounding-tree-${index}`}
+          position={tree}
+        />
+      )) : null}
       {hasDistantMountains ? (
         <group position={[0, -1.15, -33]}>
           {horizonMountainRange.map(([x, y, scale], index) => (
@@ -2140,8 +2182,8 @@ const ScanEnvironment = memo(function ScanEnvironment({
         </>
       ) : null}
       {scene.water ? (
-        <mesh position={[2.8, -3.65, -8.55]} rotation={[-Math.PI / 2, 0, 0]}>
-          <planeGeometry args={[18, 20, 1, 1]} />
+        <mesh position={[VIEWER_ORBIT_TARGET[0], -3.65, VIEWER_ORBIT_TARGET[2]]} rotation={[-Math.PI / 2, 0, 0]}>
+          <planeGeometry args={[140, 140, 1, 1]} />
           <meshStandardMaterial color="#3b9ed3" metalness={0.1} roughness={0.38} />
         </mesh>
       ) : null}
@@ -3331,15 +3373,15 @@ function App() {
     if (roundResult === "guessing" || hasCountedCurrentRoundRef.current) return;
     hasCountedCurrentRoundRef.current = true;
     const timeout = window.setTimeout(() => {
-      setCompletedRounds((currentRounds) => {
-        const nextRounds = currentRounds + 1;
-        setGameStats((currentStats) => ({ ...currentStats, score: currentStats.score + 10_000 }));
-        setWalletRewardMessage("Round complete! +10,000 wallet points.");
-        return nextRounds;
-      });
+      const nextRounds = completedRounds + 1;
+      setCompletedRounds(nextRounds);
+      if (nextRounds % 10 === 0) {
+        setGameStats((currentStats) => ({ ...currentStats, score: currentStats.score + 100 }));
+        setWalletRewardMessage("10 rounds complete! +100 wallet points.");
+      }
     }, 0);
     return () => window.clearTimeout(timeout);
-  }, [roundResult]);
+  }, [completedRounds, roundResult]);
 
   useEffect(() => {
     if (
