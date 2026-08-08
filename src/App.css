@@ -1098,7 +1098,13 @@
 
   /* The guess/search input is the one thing a player needs immediately —
      push it up above the score/stats/upgrade-shop block (which has no
-     size limit and can run long) so it's visible without scrolling. */
+     size limit and can run long) so it's visible without scrolling. The
+     Pokedex/"Who's That Pokemon?" mode switch is secondary and moves to
+     the very bottom. */
+  .mode-switch {
+    order: 2;
+  }
+
   .round-status {
     order: 1;
   }

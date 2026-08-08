@@ -29,10 +29,12 @@ import {
   InstancedMesh,
   LinearFilter,
   Mesh,
+  MeshBasicMaterial,
   MeshStandardMaterial,
   NearestFilter,
   Object3D,
   PlaneGeometry,
+  PointLight,
   RepeatWrapping,
   ShaderMaterial,
   Shape,
@@ -58,6 +60,49 @@ import {
   SKIN_PURCHASE_COSTS,
 } from "./skins";
 import "./App.css";
+
+// PokeAPI's Pokemon/species/evolution-chain/list responses are effectively
+// immutable for a given URL, so it's safe to cache them indefinitely rather
+// than re-fetching on every lookup or every game round. A small in-memory
+// map avoids repeat work within a session; a localStorage-backed layer
+// keeps the win across reloads. (Time-varying data — e.g. the weather
+// forecast — deliberately does NOT go through this cache.)
+const API_CACHE_STORAGE_PREFIX = "pokedex:api-cache:";
+const apiMemoryCache = new Map<string, unknown>();
+
+async function fetchJsonCached<T>(url: string, signal?: AbortSignal): Promise<T> {
+  const cachedInMemory = apiMemoryCache.get(url);
+  if (cachedInMemory !== undefined) {
+    return cachedInMemory as T;
+  }
+
+  const storageKey = `${API_CACHE_STORAGE_PREFIX}${url}`;
+  try {
+    const stored = window.localStorage.getItem(storageKey);
+    if (stored !== null) {
+      const parsed = JSON.parse(stored) as T;
+      apiMemoryCache.set(url, parsed);
+      return parsed;
+    }
+  } catch {
+    // A corrupt or unavailable cache entry just falls through to a normal
+    // network fetch below.
+  }
+
+  const response = await fetch(url, { signal });
+  if (!response.ok) {
+    throw new Error(`Request failed (${response.status}): ${url}`);
+  }
+  const data = (await response.json()) as T;
+  apiMemoryCache.set(url, data);
+  try {
+    window.localStorage.setItem(storageKey, JSON.stringify(data));
+  } catch {
+    // Storage may be full or unavailable (private browsing); an in-memory
+    // cache for the rest of this session is still a win.
+  }
+  return data;
+}
 
 type Pokemon = {
   id: number;
@@ -272,7 +317,7 @@ const EXTRA_TIME_SECONDS = 5;
 const EXTRA_TIME_HINT_COST = 100;
 const SKIP_POKEMON_COST = 200;
 const CONFETTI_UPGRADE_COST = 250;
-const CONFETTI_MAX_LEVEL = 1_000;
+const CONFETTI_MAX_LEVEL = 10;
 const CONFETTI_DURATION_SECONDS = 5;
 const NAME_REVEAL_UPGRADE_COST = 150;
 const NAME_REVEAL_MAX_LEVEL = 10;
@@ -458,66 +503,126 @@ function saveRecentGamePokemonIds(recentPokemonIds: readonly number[]) {
   );
 }
 
-function getSavedCapturedPokemonIds() {
+// Captured-Pokemon saves are now signed with HMAC-SHA256 so a raw
+// `localStorage.setItem("pokedex:captured-pokemon", "[1,2,...,999]")` edit
+// in devtools no longer just works. This is NOT a real security boundary —
+// the signing key ships in this client bundle, so anyone who reads the JS
+// can forge a valid signature for their own tampered list — but it does
+// stop the casual "paste a bigger array into localStorage" tampering that
+// plain unsigned JSON invited. Genuinely tamper-proof progress requires a
+// server to be the source of truth, which this app doesn't have.
+const SAVE_SIGNING_SECRET = "pokedex-collection-v1-3f7c9a2e";
+
+type SignedIdSetPayload = { ids: unknown[]; signature: string };
+
+function isSignedIdSetPayload(value: unknown): value is SignedIdSetPayload {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    Array.isArray((value as SignedIdSetPayload).ids) &&
+    typeof (value as SignedIdSetPayload).signature === "string"
+  );
+}
+
+function areIdSetsEqual(left: ReadonlySet<number>, right: ReadonlySet<number>) {
+  if (left.size !== right.size) return false;
+  for (const id of left) {
+    if (!right.has(id)) return false;
+  }
+  return true;
+}
+
+function sanitizeIds(ids: readonly unknown[], maxId: number): number[] {
+  return ids
+    .map((id) => (typeof id === "string" ? Number(id) : id))
+    .filter(
+      (id): id is number =>
+        typeof id === "number" && Number.isInteger(id) && id >= 1 && id <= maxId,
+    )
+    .sort((left, right) => left - right);
+}
+
+async function signIdPayload(idsJson: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(SAVE_SIGNING_SECRET),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signatureBytes = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(idsJson),
+  );
+  return Array.from(new Uint8Array(signatureBytes))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function saveSignedIdSet(storageKey: string, ids: ReadonlySet<number>) {
+  const sortedIds = [...ids].sort((left, right) => left - right);
+  const idsJson = JSON.stringify(sortedIds);
+  const signature = await signIdPayload(idsJson);
+  window.localStorage.setItem(
+    storageKey,
+    JSON.stringify({ ids: sortedIds, signature }),
+  );
+}
+
+// Reads whatever is saved without verifying it, for a snappy first paint —
+// legacy unsigned saves (a plain array, from before this feature existed)
+// have nothing to verify anyway and are trusted so upgrading doesn't wipe
+// anyone's existing collection. `verifySignedIdSet` below re-checks new
+// signed saves shortly after mount and resets them if they don't check out.
+function readRawIdSet(storageKey: string, maxId: number): Set<number> {
   try {
-    const savedCaptures = window.localStorage.getItem(
-      CAPTURED_POKEMON_STORAGE_KEY,
-    );
-
-    if (!savedCaptures) {
-      return new Set<number>();
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) return new Set();
+    const parsed: unknown = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return new Set(sanitizeIds(parsed, maxId));
     }
-
-    const parsedCaptures: unknown = JSON.parse(savedCaptures);
-
-    if (!Array.isArray(parsedCaptures)) {
-      return new Set<number>();
+    if (isSignedIdSetPayload(parsed)) {
+      return new Set(sanitizeIds(parsed.ids, maxId));
     }
-
-    return new Set(
-      parsedCaptures
-        .map((pokemonId) =>
-          typeof pokemonId === "string" ? Number(pokemonId) : pokemonId,
-        )
-        .filter(
-          (pokemonId): pokemonId is number =>
-            Number.isInteger(pokemonId) &&
-            pokemonId >= 1 &&
-            pokemonId <= GAME_POKEMON_COUNT,
-        ),
-    );
+    return new Set();
   } catch {
-    return new Set<number>();
+    return new Set();
   }
 }
 
-function getSavedShinyCapturedPokemonIds() {
+async function verifySignedIdSet(
+  storageKey: string,
+  maxId: number,
+): Promise<Set<number>> {
   try {
-    const savedShinyCaptures = window.localStorage.getItem(
-      SHINY_CAPTURED_POKEMON_STORAGE_KEY,
-    );
-
-    if (!savedShinyCaptures) {
-      return new Set<number>();
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) return new Set();
+    const parsed: unknown = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      // Legacy unsigned save — nothing to verify, trust it as-is.
+      return new Set(sanitizeIds(parsed, maxId));
     }
-
-    const parsedCaptures: unknown = JSON.parse(savedShinyCaptures);
-
-    if (!Array.isArray(parsedCaptures)) {
-      return new Set<number>();
+    if (!isSignedIdSetPayload(parsed)) {
+      return new Set();
     }
-
-    return new Set(
-      parsedCaptures.filter(
-        (pokemonId): pokemonId is number =>
-          Number.isInteger(pokemonId) &&
-          pokemonId >= 1 &&
-          pokemonId <= GAME_POKEMON_COUNT,
-      ),
-    );
+    const sortedIds = sanitizeIds(parsed.ids, maxId);
+    const expectedSignature = await signIdPayload(JSON.stringify(sortedIds));
+    return expectedSignature === parsed.signature
+      ? new Set(sortedIds)
+      : new Set();
   } catch {
-    return new Set<number>();
+    return new Set();
   }
+}
+
+function getSavedCapturedPokemonIds() {
+  return readRawIdSet(CAPTURED_POKEMON_STORAGE_KEY, GAME_POKEMON_COUNT);
+}
+
+function getSavedShinyCapturedPokemonIds() {
+  return readRawIdSet(SHINY_CAPTURED_POKEMON_STORAGE_KEY, GAME_POKEMON_COUNT);
 }
 
 function CapturedPokemonCollection({
@@ -549,18 +654,10 @@ function CapturedPokemonCollection({
 
     async function loadPokemonIndex() {
       try {
-        const response = await fetch(
+        const data = await fetchJsonCached<{ results: PokemonIndexEntry[] }>(
           `https://pokeapi.co/api/v2/pokemon?limit=${GAME_POKEMON_COUNT}&offset=0`,
-          { signal: controller.signal },
+          controller.signal,
         );
-
-        if (!response.ok) {
-          throw new Error("Unable to load the Pokedex.");
-        }
-
-        const data = (await response.json()) as {
-          results: PokemonIndexEntry[];
-        };
         setPokemonIndex(data.results);
       } catch (error) {
         if (!(error instanceof DOMException && error.name === "AbortError")) {
@@ -587,28 +684,18 @@ function CapturedPokemonCollection({
 
     async function loadPokemonDetails() {
       try {
-        const pokemonResponse = await fetch(
+        const pokemon = await fetchJsonCached<PokemonDetail>(
           `https://pokeapi.co/api/v2/pokemon/${selectedPokemonId}`,
-          { signal: controller.signal },
+          controller.signal,
         );
-        if (!pokemonResponse.ok) {
-          throw new Error("Unable to load Pokemon details.");
-        }
-        const pokemon = (await pokemonResponse.json()) as PokemonDetail;
-        const speciesResponse = await fetch(pokemon.species.url, {
-          signal: controller.signal,
-        });
-        if (!speciesResponse.ok) {
-          throw new Error("Unable to load Pokemon species.");
-        }
-        const species = (await speciesResponse.json()) as PokemonDetailSpecies;
-        const chainResponse = await fetch(species.evolution_chain.url, {
-          signal: controller.signal,
-        });
-        if (!chainResponse.ok) {
-          throw new Error("Unable to load evolution chain.");
-        }
-        const evolutionChain = (await chainResponse.json()) as EvolutionChain;
+        const species = await fetchJsonCached<PokemonDetailSpecies>(
+          pokemon.species.url,
+          controller.signal,
+        );
+        const evolutionChain = await fetchJsonCached<EvolutionChain>(
+          species.evolution_chain.url,
+          controller.signal,
+        );
 
         const stages: string[] = [];
         let currentStage: EvolutionChainNode[] = [evolutionChain.chain];
@@ -2997,10 +3084,12 @@ function CityHeroBlock({ palette }: { palette: CityPalette }) {
 // floats and the other sits at the water's edge.
 const FOREGROUND_LANDMARK_TYPES = new Set([
   "bug",
+  "dark",
   "dragon",
   "fairy",
   "flying",
   "ghost",
+  "grass",
   "ground",
   "ice",
   "psychic",
@@ -3008,6 +3097,9 @@ const FOREGROUND_LANDMARK_TYPES = new Set([
   "water",
 ]);
 const LANDMARK_SLOT: readonly [number, number, number] = [-3.8, -2.67, -11.2];
+// Scaled up so each type's signature landmark reads as one big, unmistakable
+// set piece rather than a modest prop next to the Pokedex.
+const LANDMARK_SCALE = 2;
 
 // Small drifting glow, generalized from `Firefly` with a configurable color
 // so it can double as pollen, fairy sparkle, or a will-o'-the-wisp.
@@ -3054,7 +3146,7 @@ function BugHiveMound({ isNightBiome }: { isNightBiome: boolean }) {
     [isNightBiome],
   );
   return (
-    <group position={LANDMARK_SLOT} rotation={[0, 0.34, 0]}>
+    <group position={LANDMARK_SLOT} rotation={[0, 0.34, 0]} scale={LANDMARK_SCALE}>
       <mesh castShadow receiveShadow scale={[1.55, 0.9, 1.35]}>
         <dodecahedronGeometry args={[1, 1]} />
         <meshStandardMaterial color="#8a6a3a" flatShading roughness={1} />
@@ -3092,7 +3184,7 @@ function DragonRuins() {
     [1.5, 1.5, -0.06],
   ];
   return (
-    <group position={LANDMARK_SLOT} rotation={[0, 0.34, 0]}>
+    <group position={LANDMARK_SLOT} rotation={[0, 0.34, 0]} scale={LANDMARK_SCALE}>
       {pillars.map(([x, height, tilt], index) => (
         <mesh
           castShadow
@@ -3147,7 +3239,7 @@ function FairyRing() {
     [],
   );
   return (
-    <group position={LANDMARK_SLOT} rotation={[0, 0.34, 0]}>
+    <group position={LANDMARK_SLOT} rotation={[0, 0.34, 0]} scale={LANDMARK_SCALE}>
       {toadstools.map((mushroom, index) => (
         <group key={index} position={[mushroom.x, 0, mushroom.z]}>
           <mesh position={[0, 0.14, 0]}>
@@ -3186,8 +3278,8 @@ function FairyRing() {
 function FlyingIslands() {
   const islandsRef = useRef<Group>(null);
   const islandSpecs: ReadonlyArray<readonly [number, number, number]> = [
-    [0, 1.6, 1.35],
-    [3.4, 0.9, 0.95],
+    [0, 2.4, 2.7],
+    [4.6, 1.3, 1.9],
   ];
   useFrame(({ clock }) => {
     if (!islandsRef.current) return;
@@ -3246,7 +3338,7 @@ function GhostGraveyard() {
     [],
   );
   return (
-    <group position={LANDMARK_SLOT} rotation={[0, 0.34, 0]}>
+    <group position={LANDMARK_SLOT} rotation={[0, 0.34, 0]} scale={LANDMARK_SCALE}>
       <mesh position={[0, -0.42, 0.3]} rotation={[-Math.PI / 2, 0, 0]}>
         <planeGeometry args={[3.6, 2.4]} />
         <meshBasicMaterial
@@ -3298,7 +3390,7 @@ function GhostGraveyard() {
 function GroundCanyon() {
   const strata = ["#c8a56e", "#b3875a", "#c8a56e", "#a8794c"];
   return (
-    <group position={LANDMARK_SLOT} rotation={[0, 0.34, 0]}>
+    <group position={LANDMARK_SLOT} rotation={[0, 0.34, 0]} scale={LANDMARK_SCALE}>
       {strata.map((color, index) => (
         <mesh
           castShadow
@@ -3343,7 +3435,7 @@ function IceGlacier() {
     [1.1, 1.3, -0.1],
   ];
   return (
-    <group position={LANDMARK_SLOT} rotation={[0, 0.34, 0]}>
+    <group position={LANDMARK_SLOT} rotation={[0, 0.34, 0]} scale={LANDMARK_SCALE}>
       <mesh position={[0.1, -0.55, 0.35]} rotation={[-Math.PI / 2, 0, 0]}>
         <circleGeometry args={[1.7, 16]} />
         <meshStandardMaterial
@@ -3384,7 +3476,7 @@ function NormalWindmill() {
     if (bladesRef.current) bladesRef.current.rotation.z += delta * 0.7;
   });
   return (
-    <group position={LANDMARK_SLOT} rotation={[0, 0.34, 0]}>
+    <group position={LANDMARK_SLOT} rotation={[0, 0.34, 0]} scale={LANDMARK_SCALE}>
       <mesh castShadow receiveShadow position={[0, 0.9, 0]}>
         <cylinderGeometry args={[0.32, 0.42, 1.8, 8]} />
         <meshStandardMaterial color="#d8cdb8" roughness={0.9} />
@@ -3424,6 +3516,7 @@ function PsychicMonument() {
     <group
       position={[LANDMARK_SLOT[0], LANDMARK_SLOT[1] + 0.3, LANDMARK_SLOT[2]]}
       rotation={[0, 0.34, 0]}
+      scale={LANDMARK_SCALE}
     >
       <mesh position={[0, 0.2, 0]} ref={ringRef} rotation={[Math.PI / 2, 0, 0]}>
         <torusGeometry args={[1, 0.08, 8, 24]} />
@@ -3471,7 +3564,7 @@ function RockMonolith() {
     [1.2, 1.45],
   ];
   return (
-    <group position={LANDMARK_SLOT} rotation={[0, 0.34, 0]}>
+    <group position={LANDMARK_SLOT} rotation={[0, 0.34, 0]} scale={LANDMARK_SCALE}>
       {stones.map(([x, height], index) => (
         <mesh
           castShadow
@@ -3524,6 +3617,7 @@ function WaterDock() {
     <group
       position={[LANDMARK_SLOT[0], -3.65, LANDMARK_SLOT[2]]}
       rotation={[0, 0.34, 0]}
+      scale={LANDMARK_SCALE}
     >
       {[-1.4, -0.7, 0, 0.7, 1.4].map((z) => (
         <mesh key={z} position={[0, 0.09, z]} receiveShadow>
@@ -3825,6 +3919,139 @@ function DirtRoad({ isWetWeather }: { isWetWeather: boolean }) {
   );
 }
 
+// A towering obsidian altar with a black "eclipse" disc hovering above it
+// (a dark sphere with a thin glowing crescent rim) and shadow wisps drifting
+// around its base.
+function DarkUmbralAltar() {
+  const eclipseRef = useRef<Group>(null);
+  const ringRef = useRef<Mesh>(null);
+  useFrame(({ clock }) => {
+    const time = clock.getElapsedTime();
+    if (eclipseRef.current) {
+      eclipseRef.current.position.y = 3.2 + Math.sin(time * 0.35) * 0.2;
+      eclipseRef.current.rotation.y = time * 0.15;
+    }
+    if (ringRef.current) {
+      const material = ringRef.current.material as MeshStandardMaterial;
+      material.emissiveIntensity = 0.7 + Math.sin(time * 1.1) * 0.25;
+    }
+  });
+  const spires: ReadonlyArray<readonly [number, number, number]> = [
+    [-1.6, 1.5, -0.3], [1.7, 1.9, 0.4], [0.3, 2.4, -1.1],
+  ];
+  const wisps = useMemo(
+    () => Array.from({ length: 6 }, (_, index) => ({
+      color: index % 2 ? "#7a5fe0" : "#2a2038",
+      phase: index * 0.8,
+      position: [-1.3 + ((index * 41) % 26) / 10, 0.4 + ((index * 19) % 12) / 10, -0.4 + ((index * 31) % 10) / 10] as const,
+    })),
+    [],
+  );
+  return (
+    <group position={LANDMARK_SLOT} rotation={[0, 0.34, 0]} scale={LANDMARK_SCALE}>
+      <mesh castShadow receiveShadow position={[0, 1, 0]}>
+        <cylinderGeometry args={[0.75, 1.1, 2, 8]} />
+        <meshStandardMaterial color="#181420" flatShading roughness={0.85} />
+      </mesh>
+      <mesh position={[0, 2.05, 0]}>
+        <cylinderGeometry args={[0.85, 0.85, 0.12, 8]} />
+        <meshStandardMaterial color="#241d30" flatShading roughness={0.8} />
+      </mesh>
+      {spires.map(([x, height, z], index) => (
+        <mesh castShadow key={index} position={[x, height / 2, z]}>
+          <coneGeometry args={[0.22, height, 5]} />
+          <meshStandardMaterial color="#20182c" flatShading roughness={0.9} />
+        </mesh>
+      ))}
+      <group position={[0, 3.2, 0]} ref={eclipseRef}>
+        <mesh>
+          <sphereGeometry args={[0.62, 16, 12]} />
+          <meshStandardMaterial color="#050308" roughness={0.4} />
+        </mesh>
+        <mesh ref={ringRef} rotation={[0.3, 0, 0]}>
+          <torusGeometry args={[0.68, 0.035, 8, 32]} />
+          <meshStandardMaterial color="#b58cff" emissive="#8a5fe0" emissiveIntensity={0.8} roughness={0.3} toneMapped={false} />
+        </mesh>
+      </group>
+      {wisps.map((wisp, index) => (
+        <GlowMote color={wisp.color} key={index} phase={wisp.phase} position={wisp.position} />
+      ))}
+    </group>
+  );
+}
+
+// A colossal ancient tree — the "one big thing" grass-type rounds get,
+// towering well above the ordinary forest trees scattered around it, with
+// hanging vines, a hollow lit from within, and fireflies circling the
+// canopy.
+function GrassWorldTree() {
+  const canopyRef = useRef<Group>(null);
+  useFrame(({ clock }) => {
+    if (canopyRef.current) canopyRef.current.rotation.z = Math.sin(clock.getElapsedTime() * 0.3) * 0.015;
+  });
+  const vines: ReadonlyArray<readonly [number, number, number]> = [
+    [-0.9, 2.6, 0.6], [0.6, 3.1, 0.9], [1.3, 2.3, -0.4], [-1.5, 2.9, -0.6],
+  ];
+  const canopyTiers: ReadonlyArray<readonly [number, number, number, string]> = [
+    [0, 3.1, 2.6, "#2f6e3c"],
+    [0.35, 3.9, 2.1, "#3a7f45"],
+    [-0.25, 4.6, 1.55, "#4d9750"],
+  ];
+  const fireflies = useMemo(
+    () => Array.from({ length: 7 }, (_, index) => ({
+      color: index % 2 ? "#e9ff8a" : "#c8f7a0",
+      phase: index * 0.7,
+      position: [-1.4 + ((index * 37) % 28) / 10, 2.6 + ((index * 23) % 16) / 10, -0.6 + ((index * 29) % 12) / 10] as const,
+    })),
+    [],
+  );
+  return (
+    <group position={LANDMARK_SLOT} rotation={[0, 0.34, 0]} scale={LANDMARK_SCALE}>
+      <mesh castShadow receiveShadow position={[0, 1.35, 0]}>
+        <cylinderGeometry args={[0.55, 0.85, 2.7, 9]} />
+        <meshStandardMaterial color="#5a3d26" flatShading roughness={1} />
+      </mesh>
+      <mesh position={[0, 0.55, 0.62]} rotation={[0.15, 0, 0]}>
+        <sphereGeometry args={[0.4, 8, 6, 0, Math.PI * 2, 0, Math.PI / 1.7]} />
+        <meshStandardMaterial color="#2c1c10" side={DoubleSide} roughness={1} />
+      </mesh>
+      <mesh position={[0, 0.75, 0.64]}>
+        <circleGeometry args={[0.16, 10]} />
+        <meshStandardMaterial color="#ffd47a" emissive="#d89431" emissiveIntensity={0.7} toneMapped={false} />
+      </mesh>
+      <group ref={canopyRef}>
+        {canopyTiers.map(([x, height, scale, color], index) => (
+          <mesh castShadow key={index} position={[x, height, 0]} scale={scale}>
+            <coneGeometry args={[1, 1.9, 8]} />
+            <meshStandardMaterial color={color} flatShading roughness={0.92} />
+          </mesh>
+        ))}
+      </group>
+      {vines.map(([x, y, z], index) => (
+        <mesh key={index} position={[x, y - 0.55, z]}>
+          <cylinderGeometry args={[0.025, 0.02, 1.1, 4]} />
+          <meshStandardMaterial color="#3f6b2f" roughness={1} />
+        </mesh>
+      ))}
+      {[[-1.1, -0.4, 0.9], [0.9, -0.35, 1.1], [1.4, -0.42, 0.2]].map(([x, y, z], index) => (
+        <group key={index} position={[x, y, z]}>
+          <mesh>
+            <cylinderGeometry args={[0.03, 0.045, 0.22, 5]} />
+            <meshStandardMaterial color="#f2ead6" roughness={0.9} />
+          </mesh>
+          <mesh position={[0, 0.14, 0]}>
+            <sphereGeometry args={[0.1, 6, 5, 0, Math.PI * 2, 0, Math.PI / 2]} />
+            <meshStandardMaterial color="#c0492f" roughness={0.75} />
+          </mesh>
+        </group>
+      ))}
+      {fireflies.map((firefly, index) => (
+        <GlowMote color={firefly.color} key={index} phase={firefly.phase} position={firefly.position} />
+      ))}
+    </group>
+  );
+}
+
 function TypeLandmark({
   isNightBiome,
   primaryType,
@@ -3835,6 +4062,8 @@ function TypeLandmark({
   switch (primaryType) {
     case "bug":
       return <BugHiveMound isNightBiome={isNightBiome} />;
+    case "dark":
+      return <DarkUmbralAltar />;
     case "dragon":
       return <DragonRuins />;
     case "fairy":
@@ -3843,6 +4072,8 @@ function TypeLandmark({
       return <FlyingIslands />;
     case "ghost":
       return <GhostGraveyard />;
+    case "grass":
+      return <GrassWorldTree />;
     case "ground":
       return <GroundCanyon />;
     case "ice":
@@ -3865,6 +4096,8 @@ const ScanEnvironment = memo(function ScanEnvironment({
   concealed,
   habitat,
   isEvening,
+  isWetWeather,
+  revealAmount,
   spriteUrl,
   typeNames,
 }: {
@@ -3872,34 +4105,11 @@ const ScanEnvironment = memo(function ScanEnvironment({
   concealed: boolean;
   habitat: string;
   isEvening: boolean;
+  isWetWeather: boolean;
+  revealAmount: number;
   spriteUrl: string | null;
   typeNames: string[];
 }) {
-  const [isWetWeather, setIsWetWeather] = useState(false);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    async function loadOsloWeather() {
-      try {
-        const response = await fetch(
-          "https://api.open-meteo.com/v1/forecast?latitude=59.9139&longitude=10.7522&current=precipitation,weather_code&timezone=Europe%2FOslo",
-          { signal: controller.signal },
-        );
-        if (!response.ok) return;
-        const data = (await response.json()) as {
-          current?: { precipitation?: number; weather_code?: number };
-        };
-        const code = data.current?.weather_code ?? 0;
-        setIsWetWeather(
-          (data.current?.precipitation ?? 0) > 0.05 || code >= 51,
-        );
-      } catch {
-        // The landscape remains clear if the optional weather lookup is unavailable.
-      }
-    }
-    void loadOsloWeather();
-    return () => controller.abort();
-  }, []);
   const habitatScene = {
     cave: {
       ground: "#6f7667",
@@ -4799,6 +5009,7 @@ const ScanEnvironment = memo(function ScanEnvironment({
         <ScanTargetSprite
           animatedSpriteUrl={animatedSpriteUrl}
           concealed={concealed}
+          revealAmount={revealAmount}
           spriteUrl={spriteUrl}
         />
       </group>
@@ -4817,11 +5028,26 @@ const ScanEnvironment = memo(function ScanEnvironment({
 // podium sprite be a genuine textured mesh — depth-tested like everything
 // else in the scene — instead of a DOM overlay that can only ever be fully
 // shown or fully `display:none`-hidden in front of the model.
+// `CanvasRenderingContext2D.drawImage()` sampling a plain `<img>` never
+// reflects an animated GIF's current playback frame in Chromium (confirmed
+// empirically — pixel data is frozen on the first frame no matter how the
+// element is sized/positioned/visible, or how long you sample it for). The
+// only way to genuinely animate a GIF onto a canvas texture is to decode
+// its frames directly via the WebCodecs `ImageDecoder` API and step
+// through them ourselves on their own real per-frame durations. Where
+// that API (or GIF support in it) isn't available, this falls back to a
+// static first-frame draw — same as before, just no longer silently the
+// only option.
+type DecodedSpriteFrame = { durationMs: number; image: VideoFrame };
+
 function useSpriteTexture(url: string | null, onError?: () => void) {
   const [texture, setTexture] = useState<CanvasTexture | null>(null);
   const [aspect, setAspect] = useState(1);
-  const imgRef = useRef<HTMLImageElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const framesRef = useRef<DecodedSpriteFrame[]>([]);
+  const totalDurationMsRef = useRef(0);
+  const currentFrameIndexRef = useRef(-1);
+  const playbackStartRef = useRef(0);
   const onErrorRef = useRef(onError);
   onErrorRef.current = onError;
 
@@ -4831,51 +5057,132 @@ function useSpriteTexture(url: string | null, onError?: () => void) {
       return;
     }
     let cancelled = false;
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.decoding = "async";
-    img.style.cssText =
-      "position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;";
+    const resolvedUrl = url;
     const canvas = document.createElement("canvas");
+    canvasRef.current = canvas;
 
-    img.onload = () => {
-      if (cancelled) return;
-      canvas.width = img.naturalWidth || 96;
-      canvas.height = img.naturalHeight || 96;
-      const canvasTexture = new CanvasTexture(canvas);
-      canvasTexture.colorSpace = SRGBColorSpace;
-      canvasTexture.magFilter = NearestFilter;
-      canvasTexture.minFilter = NearestFilter;
-      imgRef.current = img;
-      canvasRef.current = canvas;
-      setAspect(canvas.width / canvas.height);
-      setTexture(canvasTexture);
-    };
-    img.onerror = () => {
-      if (cancelled) return;
-      onErrorRef.current?.();
-      setTexture(null);
-    };
+    async function decodeAnimatedFrames(): Promise<boolean> {
+      if (!resolvedUrl.toLowerCase().endsWith(".gif") || typeof ImageDecoder === "undefined") {
+        return false;
+      }
+      try {
+        if ((await ImageDecoder.isTypeSupported?.("image/gif")) === false) {
+          return false;
+        }
+      } catch {
+        // Some engines don't implement isTypeSupported; try decoding anyway.
+      }
 
-    document.body.appendChild(img);
-    img.src = url;
+      const response = await fetch(resolvedUrl);
+      if (!response.ok) throw new Error("Sprite fetch failed.");
+      const data = await response.arrayBuffer();
+      const decoder = new ImageDecoder({ data, type: "image/gif" });
+      await decoder.tracks.ready;
+      const frameCount = decoder.tracks.selectedTrack?.frameCount ?? 1;
+      if (frameCount <= 1) {
+        decoder.close();
+        return false;
+      }
+
+      const frames: DecodedSpriteFrame[] = [];
+      let totalDurationMs = 0;
+      for (let frameIndex = 0; frameIndex < frameCount; frameIndex++) {
+        const { image } = await decoder.decode({ frameIndex });
+        const durationMs = (image.duration ?? 100_000) / 1000;
+        frames.push({ durationMs, image });
+        totalDurationMs += durationMs;
+      }
+      decoder.close();
+
+      if (cancelled) {
+        frames.forEach((frame) => {
+          frame.image.close();
+        });
+        return true;
+      }
+
+      framesRef.current = frames;
+      totalDurationMsRef.current = totalDurationMs;
+      canvas.width = frames[0].image.displayWidth;
+      canvas.height = frames[0].image.displayHeight;
+      return true;
+    }
+
+    function loadStaticFrame(): Promise<void> {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.onload = () => {
+          if (cancelled) {
+            resolve();
+            return;
+          }
+          canvas.width = img.naturalWidth || 96;
+          canvas.height = img.naturalHeight || 96;
+          canvas.getContext("2d")?.drawImage(img, 0, 0, canvas.width, canvas.height);
+          resolve();
+        };
+        img.onerror = () => reject(new Error("Sprite image failed to load."));
+        img.src = resolvedUrl;
+      });
+    }
+
+    (async () => {
+      try {
+        const isAnimated = await decodeAnimatedFrames();
+        if (!isAnimated) {
+          await loadStaticFrame();
+        }
+        if (cancelled) return;
+
+        const canvasTexture = new CanvasTexture(canvas);
+        canvasTexture.colorSpace = SRGBColorSpace;
+        canvasTexture.magFilter = NearestFilter;
+        canvasTexture.minFilter = NearestFilter;
+        currentFrameIndexRef.current = -1;
+        playbackStartRef.current = performance.now();
+        setAspect(canvas.width / canvas.height);
+        setTexture(canvasTexture);
+      } catch {
+        if (!cancelled) {
+          onErrorRef.current?.();
+          setTexture(null);
+        }
+      }
+    })();
 
     return () => {
       cancelled = true;
-      imgRef.current = null;
+      framesRef.current.forEach((frame) => {
+        frame.image.close();
+      });
+      framesRef.current = [];
       canvasRef.current = null;
-      img.remove();
     };
   }, [url]);
 
   useFrame(() => {
-    const img = imgRef.current;
     const canvas = canvasRef.current;
-    if (!img || !canvas || !texture) return;
+    const frames = framesRef.current;
+    if (!canvas || !texture || frames.length === 0) return;
+
+    const elapsedMs = (performance.now() - playbackStartRef.current) % totalDurationMsRef.current;
+    let accumulatedMs = 0;
+    let frameIndex = frames.length - 1;
+    for (let index = 0; index < frames.length; index++) {
+      accumulatedMs += frames[index].durationMs;
+      if (elapsedMs < accumulatedMs) {
+        frameIndex = index;
+        break;
+      }
+    }
+    if (frameIndex === currentFrameIndexRef.current) return;
+    currentFrameIndexRef.current = frameIndex;
+
     const context = canvas.getContext("2d");
     if (!context) return;
     context.clearRect(0, 0, canvas.width, canvas.height);
-    context.drawImage(img, 0, 0, canvas.width, canvas.height);
+    context.drawImage(frames[frameIndex].image, 0, 0, canvas.width, canvas.height);
     texture.needsUpdate = true;
   });
 
@@ -4885,10 +5192,12 @@ function useSpriteTexture(url: string | null, onError?: () => void) {
 function ScanTargetSprite({
   animatedSpriteUrl,
   concealed,
+  revealAmount,
   spriteUrl,
 }: {
   animatedSpriteUrl: string | null;
   concealed: boolean;
+  revealAmount: number;
   spriteUrl: string | null;
 }) {
   const [failedAnimatedUrl, setFailedAnimatedUrl] = useState<string | null>(
@@ -4902,6 +5211,13 @@ function ScanTargetSprite({
     if (displayUrl === animatedSpriteUrl)
       setFailedAnimatedUrl(animatedSpriteUrl);
   });
+  // Mirrors the Pokedex screen's own silhouette reveal (brightness(revealAmount)
+  // on the DOM sprite there) so the background Pokemon lightens out of its
+  // silhouette in step with it, instead of popping fully black/white.
+  const silhouetteTint = useMemo(
+    () => new Color(revealAmount, revealAmount, revealAmount),
+    [revealAmount],
+  );
 
   if (!texture) return null;
 
@@ -4914,7 +5230,7 @@ function ScanTargetSprite({
         <planeGeometry args={[1, 1]} />
         <meshBasicMaterial
           alphaTest={0.06}
-          color={concealed ? "#000000" : "#ffffff"}
+          color={concealed ? silhouetteTint : "#ffffff"}
           map={texture}
           toneMapped={false}
           transparent
@@ -5089,12 +5405,128 @@ function PokedexModel({
   );
 }
 
+// Confetti color pieces now echo the current Pokemon's terrain instead of
+// always being the same generic rainbow — a Fire round showers embers and
+// gold, an Ice round showers icy blues and white, and so on.
+const CONFETTI_TYPE_PALETTES: Record<string, ReadonlyArray<readonly [number, number, number]>> = {
+  bug: [[0.66, 0.82, 0.3], [0.9, 0.78, 0.15], [0.3, 0.55, 0.2], [0.85, 0.4, 0.15]],
+  dark: [[0.35, 0.25, 0.55], [0.15, 0.15, 0.2], [0.55, 0.4, 0.85], [0.1, 0.1, 0.15]],
+  dragon: [[0.44, 0.3, 0.75], [0.25, 0.6, 0.65], [0.7, 0.4, 0.85], [0.2, 0.35, 0.5]],
+  electric: [[1, 0.86, 0.2], [1, 0.95, 0.55], [0.3, 0.7, 1], [1, 1, 0.8]],
+  fairy: [[1, 0.75, 0.87], [0.94, 0.75, 1], [1, 0.9, 0.6], [0.8, 0.95, 1]],
+  fighting: [[0.85, 0.4, 0.2], [0.6, 0.35, 0.15], [0.9, 0.65, 0.2], [0.4, 0.25, 0.15]],
+  fire: [[1, 0.35, 0.1], [1, 0.7, 0.15], [1, 0.86, 0.2], [0.75, 0.15, 0.1]],
+  flying: [[0.55, 0.8, 1], [1, 1, 1], [0.7, 0.9, 0.6], [0.4, 0.65, 0.85]],
+  ghost: [[0.35, 0.3, 0.55], [0.55, 0.85, 0.8], [0.2, 0.18, 0.32], [0.7, 0.6, 0.9]],
+  grass: [[0.3, 0.75, 0.35], [0.85, 0.9, 0.3], [0.55, 0.4, 0.25], [0.95, 0.75, 0.4]],
+  ground: [[0.75, 0.55, 0.3], [0.85, 0.68, 0.4], [0.55, 0.4, 0.22], [0.95, 0.8, 0.55]],
+  ice: [[0.7, 0.92, 1], [1, 1, 1], [0.45, 0.75, 0.95], [0.85, 0.97, 1]],
+  normal: [[1, 0.3, 0.36], [1, 0.86, 0.2], [0.25, 0.82, 1], [0.44, 0.96, 0.46], [0.78, 0.43, 1], [1, 0.55, 0.16]],
+  poison: [[0.6, 0.3, 0.75], [0.4, 0.75, 0.35], [0.75, 0.4, 0.85], [0.25, 0.15, 0.35]],
+  psychic: [[0.9, 0.4, 0.6], [0.7, 0.4, 0.85], [1, 0.6, 0.75], [0.55, 0.3, 0.65]],
+  rock: [[0.55, 0.48, 0.4], [0.75, 0.68, 0.55], [0.4, 0.35, 0.28], [0.85, 0.55, 0.3]],
+  steel: [[0.75, 0.82, 0.88], [0.55, 0.62, 0.68], [1, 1, 1], [0.4, 0.48, 0.55]],
+  water: [[0.2, 0.6, 0.9], [0.5, 0.85, 1], [0.15, 0.4, 0.7], [1, 1, 1]],
+};
+
+// The real "it's shiny!" moment: gold shards spiral outward from the
+// Pokemon on multiple arms, a stack of shockwave rings pulses out and
+// fades, and a warm point light flares over the same span for a proper
+// dazzling flash — anchored in the 3D scene at the Pokemon itself, not a
+// flat full-screen overlay.
+function ShinyBurst() {
+  const groupRef = useRef<Group>(null);
+  const shardsRef = useRef<InstancedMesh>(null);
+  const ringsRef = useRef<Group>(null);
+  const flashRef = useRef<PointLight>(null);
+  const dummy = useMemo(() => new Object3D(), []);
+  const startTimeRef = useRef<number | null>(null);
+  const shardCount = 90;
+  const armCount = 3;
+  const shards = useMemo(
+    () => Array.from({ length: shardCount }, (_, index) => ({
+      armOffset: (index % armCount) * ((Math.PI * 2) / armCount),
+      baseAngle: (index / shardCount) * Math.PI * 8,
+      color: index % 3 === 0 ? "#fff6d0" : index % 3 === 1 ? "#ffd94d" : "#ffb020",
+      heightJitter: ((index * 13) % 11) / 10 - 0.5,
+      speed: 1.5 + (index % 5) * 0.3,
+    })),
+    [],
+  );
+
+  useEffect(() => {
+    if (!shardsRef.current) return;
+    shards.forEach((shard, index) => {
+      shardsRef.current?.setColorAt(index, new Color(shard.color));
+    });
+    if (shardsRef.current.instanceColor) shardsRef.current.instanceColor.needsUpdate = true;
+  }, [shards]);
+
+  useFrame(({ clock }) => {
+    if (startTimeRef.current === null) startTimeRef.current = clock.getElapsedTime();
+    const time = clock.getElapsedTime() - startTimeRef.current;
+
+    if (shardsRef.current) {
+      shards.forEach((shard, index) => {
+        const angle = shard.baseAngle + shard.armOffset + time * 2.6;
+        const radius = Math.min(2.8, time * shard.speed * 1.1);
+        const fade = Math.max(0, 1 - time / 1.7);
+        dummy.position.set(
+          Math.cos(angle) * radius,
+          shard.heightJitter * fade + Math.sin(time * 3 + index) * 0.06,
+          Math.sin(angle) * radius,
+        );
+        dummy.rotation.set(time * 2.2 + index, time * 1.6, 0);
+        dummy.scale.setScalar((0.06 + (index % 4) * 0.018) * fade);
+        dummy.updateMatrix();
+        shardsRef.current?.setMatrixAt(index, dummy.matrix);
+      });
+      shardsRef.current.instanceMatrix.needsUpdate = true;
+    }
+
+    ringsRef.current?.children.forEach((ring, index) => {
+      const delay = index * 0.22;
+      const t = Math.max(0, time - delay);
+      ring.scale.setScalar(0.3 + t * 3.6);
+      const material = (ring as Mesh).material as MeshBasicMaterial;
+      material.opacity = Math.max(0, 0.85 - t * 0.85);
+    });
+
+    if (flashRef.current) {
+      flashRef.current.intensity = Math.max(0, 6 - time * 3.2);
+    }
+    if (groupRef.current) {
+      groupRef.current.rotation.y = time * 0.4;
+    }
+  });
+
+  return (
+    <group position={[2.4, -0.05, -6.6]} ref={groupRef}>
+      <pointLight color="#ffe066" distance={9} intensity={6} ref={flashRef} />
+      <instancedMesh args={[undefined, undefined, shardCount]} ref={shardsRef}>
+        <octahedronGeometry args={[1, 0]} />
+        <meshBasicMaterial toneMapped={false} transparent opacity={0.95} />
+      </instancedMesh>
+      <group ref={ringsRef}>
+        {[0, 1, 2].map((index) => (
+          <mesh key={index} rotation={[Math.PI / 2, 0, 0]}>
+            <ringGeometry args={[0.7, 0.85, 40]} />
+            <meshBasicMaterial color="#fff2b0" depthWrite={false} side={DoubleSide} toneMapped={false} transparent />
+          </mesh>
+        ))}
+      </group>
+    </group>
+  );
+}
+
 function WorldConfetti({
   level,
+  palette = CONFETTI_TYPE_PALETTES.normal,
   seed,
   settled = false,
 }: {
   level: number;
+  palette?: ReadonlyArray<readonly [number, number, number]>;
   seed: number;
   settled?: boolean;
 }) {
@@ -5103,9 +5535,11 @@ function WorldConfetti({
     const adaptiveCap =
       hardwareThreads >= 8 ? 20_000 : hardwareThreads >= 6 ? 12_000 : 6_000;
 
+    // Levels now run 0-10 instead of 0-1000 (100x steeper per level) so
+    // level 10 still reaches exactly the same max density level 1000 used to.
     return settled
-      ? Math.min(1_200, 120 + level * 2)
-      : Math.min(adaptiveCap, 600 + level * 28);
+      ? Math.min(1_200, 120 + level * 200)
+      : Math.min(adaptiveCap, 600 + level * 2_800);
   }, [level, settled]);
   const particleSystem = useMemo(() => {
     const geometry = new BufferGeometry();
@@ -5124,14 +5558,6 @@ function WorldConfetti({
     // hiding particles entirely until they actually launch.)
     const podiumOrigin: [number, number, number] = [2.4, -0.4, -6.6];
     const skyRatio = 0.45;
-    const palette: Array<[number, number, number]> = [
-      [1, 0.3, 0.36],
-      [1, 0.86, 0.2],
-      [0.25, 0.82, 1],
-      [0.44, 0.96, 0.46],
-      [0.78, 0.43, 1],
-      [1, 0.55, 0.16],
-    ];
 
     const random = (index: number, salt: number) => {
       const value =
@@ -5206,7 +5632,7 @@ function WorldConfetti({
     );
     geometry.setAttribute("color", new Float32BufferAttribute(colors, 3));
     return { geometry };
-  }, [particleCount, seed, settled]);
+  }, [palette, particleCount, seed, settled]);
   const startedAt = useRef<number | null>(settled ? 0 : null);
   const materialRef = useRef<ShaderMaterial>(null);
 
@@ -5494,6 +5920,32 @@ function App() {
     initialGamePokemonId ? String(initialGamePokemonId) : INITIAL_QUERY,
   );
   const [guess, setGuess] = useState("");
+  // Fetched once here at the app root — ScanEnvironment used to fetch this
+  // itself, but it remounts (new `key`) on every Pokemon change, so it was
+  // re-requesting the forecast on every single lookup/round and tripping
+  // the free API's rate limit.
+  const [isWetWeather, setIsWetWeather] = useState(false);
+  useEffect(() => {
+    const controller = new AbortController();
+    async function loadOsloWeather() {
+      try {
+        const response = await fetch(
+          "https://api.open-meteo.com/v1/forecast?latitude=59.9139&longitude=10.7522&current=precipitation,weather_code&timezone=Europe%2FOslo",
+          { signal: controller.signal },
+        );
+        if (!response.ok) return;
+        const data = (await response.json()) as {
+          current?: { precipitation?: number; weather_code?: number };
+        };
+        const code = data.current?.weather_code ?? 0;
+        setIsWetWeather((data.current?.precipitation ?? 0) > 0.05 || code >= 51);
+      } catch {
+        // The landscape remains clear if the optional weather lookup is unavailable.
+      }
+    }
+    void loadOsloWeather();
+    return () => controller.abort();
+  }, []);
   const [roundResult, setRoundResult] = useState<RoundResult>("guessing");
   const [lastRoundOutcome, setLastRoundOutcome] = useState<{
     fuzzy: boolean;
@@ -5648,18 +6100,10 @@ function App() {
 
     async function loadVoicePokemonIndex() {
       try {
-        const response = await fetch(
+        const data = await fetchJsonCached<{ results: PokemonIndexEntry[] }>(
           `https://pokeapi.co/api/v2/pokemon?limit=${GAME_POKEMON_COUNT}&offset=0`,
-          { signal: controller.signal },
+          controller.signal,
         );
-
-        if (!response.ok) {
-          throw new Error("Unable to load Pokemon names.");
-        }
-
-        const data = (await response.json()) as {
-          results: PokemonIndexEntry[];
-        };
         setVoicePokemonIndex(
           data.results.map((pokemon, index) => ({ ...pokemon, id: index + 1 })),
         );
@@ -5694,22 +6138,33 @@ function App() {
   }, [selectedGenerations]);
 
   useEffect(() => {
-    window.localStorage.setItem(
-      CAPTURED_POKEMON_STORAGE_KEY,
-      JSON.stringify(
-        [...capturedPokemonIds].sort((left, right) => left - right),
-      ),
-    );
+    void saveSignedIdSet(CAPTURED_POKEMON_STORAGE_KEY, capturedPokemonIds);
   }, [capturedPokemonIds]);
 
   useEffect(() => {
-    window.localStorage.setItem(
-      SHINY_CAPTURED_POKEMON_STORAGE_KEY,
-      JSON.stringify(
-        [...shinyCapturedPokemonIds].sort((left, right) => left - right),
-      ),
-    );
+    void saveSignedIdSet(SHINY_CAPTURED_POKEMON_STORAGE_KEY, shinyCapturedPokemonIds);
   }, [shinyCapturedPokemonIds]);
+
+  // The initial state read above trusts whatever's in localStorage for a
+  // snappy first paint; re-verify signed saves right after mount and snap
+  // back to the signed truth (or empty, if someone hand-edited the array)
+  // if it doesn't match.
+  useEffect(() => {
+    void verifySignedIdSet(CAPTURED_POKEMON_STORAGE_KEY, GAME_POKEMON_COUNT).then(
+      (verifiedIds) => {
+        setCapturedPokemonIds((current) =>
+          areIdSetsEqual(current, verifiedIds) ? current : verifiedIds,
+        );
+      },
+    );
+    void verifySignedIdSet(SHINY_CAPTURED_POKEMON_STORAGE_KEY, GAME_POKEMON_COUNT).then(
+      (verifiedIds) => {
+        setShinyCapturedPokemonIds((current) =>
+          areIdSetsEqual(current, verifiedIds) ? current : verifiedIds,
+        );
+      },
+    );
+  }, []);
 
   useEffect(() => {
     confettiLevelRef.current = confettiLevel;
@@ -5814,32 +6269,31 @@ function App() {
       });
 
       try {
-        const response = await fetch(
-          `https://pokeapi.co/api/v2/pokemon/${encodeURIComponent(
-            normalizedQuery,
-          )}`,
-          { signal: controller.signal },
-        );
-
-        if (!response.ok) {
+        let pokemon: Pokemon;
+        try {
+          pokemon = await fetchJsonCached<Pokemon>(
+            `https://pokeapi.co/api/v2/pokemon/${encodeURIComponent(
+              normalizedQuery,
+            )}`,
+            controller.signal,
+          );
+        } catch (error) {
+          if (error instanceof DOMException && error.name === "AbortError") {
+            throw error;
+          }
           throw new Error("Pokemon not found.");
         }
-
-        const pokemon = (await response.json()) as Pokemon;
 
         let flavorText = FLAVOR_TEXT_FALLBACK;
         let habitat = "rare";
 
         try {
-          const speciesResponse = await fetch(pokemon.species.url, {
-            signal: controller.signal,
-          });
-
-          if (speciesResponse.ok) {
-            const species = (await speciesResponse.json()) as PokemonSpecies;
-            flavorText = getEnglishFlavorText(species);
-            habitat = species.habitat?.name ?? "rare";
-          }
+          const species = await fetchJsonCached<PokemonSpecies>(
+            pokemon.species.url,
+            controller.signal,
+          );
+          flavorText = getEnglishFlavorText(species);
+          habitat = species.habitat?.name ?? "rare";
         } catch (error) {
           if (error instanceof DOMException && error.name === "AbortError") {
             throw error;
@@ -6073,6 +6527,8 @@ function App() {
         : ["normal"],
     [pokemonState],
   );
+  const confettiPalette =
+    CONFETTI_TYPE_PALETTES[typeNames[0] ?? "normal"] ?? CONFETTI_TYPE_PALETTES.normal;
   const habitat =
     pokemonState.status === "ready" ? pokemonState.habitat : "rare";
   const isEvening = isEveningLocally();
@@ -6579,6 +7035,7 @@ function App() {
                 <WorldConfetti
                   key={`settled-confetti-${burst.id}`}
                   level={burst.level}
+                  palette={confettiPalette}
                   seed={burst.id}
                   settled
                 />
@@ -6587,15 +7044,19 @@ function App() {
                 <WorldConfetti
                   key={`world-confetti-${confettiLevel}-${confettiEventId}`}
                   level={confettiLevel}
+                  palette={confettiPalette}
                   seed={confettiEventId}
                 />
               ) : null}
+              {showShinyCelebration ? <ShinyBurst /> : null}
               <ScanEnvironment
                 animatedSpriteUrl={animatedSpriteUrl}
                 concealed={mode === "game" && !isGameRoundRevealed}
                 habitat={habitat}
                 isEvening={isEvening}
+                isWetWeather={isWetWeather}
                 key={`${mode === "game" && !isGameRoundRevealed ? "scan-target-silhouette" : "scan-target-visible"}-${animatedSpriteUrl ?? spriteUrl ?? "fallback"}`}
+                revealAmount={silhouetteRevealAmount}
                 spriteUrl={spriteUrl}
                 typeNames={typeNames}
               />
@@ -6931,7 +7392,7 @@ function App() {
                     type="button"
                   >
                     {confettiLevel >= CONFETTI_MAX_LEVEL
-                      ? "Confetti maxed (1000)"
+                      ? `Confetti maxed (${CONFETTI_MAX_LEVEL})`
                       : `Confetti Lv. ${confettiLevel} → ${confettiLevel + 1} (${CONFETTI_UPGRADE_COST} pts)`}
                   </button>
                 </div>
