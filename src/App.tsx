@@ -70,6 +70,19 @@ import "./App.css";
 const API_CACHE_STORAGE_PREFIX = "pokedex:api-cache:";
 const apiMemoryCache = new Map<string, unknown>();
 
+// Distinguishes "the server answered but said no" (a real HTTP status, e.g.
+// 404) from a plain network failure (offline, DNS, CORS — `fetch` itself
+// throws a TypeError with no `status` for those). Callers use `status` to
+// tell "not found" apart from "couldn't reach the server" instead of
+// collapsing both into the same generic message.
+class FetchStatusError extends Error {
+  status: number;
+  constructor(status: number, url: string) {
+    super(`Request failed (${status}): ${url}`);
+    this.status = status;
+  }
+}
+
 async function fetchJsonCached<T>(url: string, signal?: AbortSignal): Promise<T> {
   const cachedInMemory = apiMemoryCache.get(url);
   if (cachedInMemory !== undefined) {
@@ -91,7 +104,7 @@ async function fetchJsonCached<T>(url: string, signal?: AbortSignal): Promise<T>
 
   const response = await fetch(url, { signal });
   if (!response.ok) {
-    throw new Error(`Request failed (${response.status}): ${url}`);
+    throw new FetchStatusError(response.status, url);
   }
   const data = (await response.json()) as T;
   apiMemoryCache.set(url, data);
@@ -286,6 +299,12 @@ const VIEWER_CAMERA = {
   fov: 58,
 };
 const VIEWER_ORBIT_TARGET: [number, number, number] = [0, -0.9, -2.8];
+// The scan target podium's transform — shared between ScanEnvironment
+// (which renders the podium's static meshes) and the sprite billboard
+// rendered as its sibling outside ScanEnvironment's memo boundary (see
+// `revealAmount` comment near ScanEnvironment) so both line up exactly.
+const SCAN_PODIUM_POSITION: [number, number, number] = [2.4, -1.1, -8.2];
+const SCAN_PODIUM_SCALE = 1.75;
 const POKEDEX_MODEL_POSITION: [number, number, number] = [0.7, -0.7, 0.35];
 const POKEDEX_MODEL_ROTATION_Y = -0.99;
 const POKEDEX_MODEL_SCALE = 2.15;
@@ -542,14 +561,23 @@ function sanitizeIds(ids: readonly unknown[], maxId: number): number[] {
     .sort((left, right) => left - right);
 }
 
-async function signIdPayload(idsJson: string): Promise<string> {
-  const key = await crypto.subtle.importKey(
+// The signing key never changes for the life of the bundle, so it's
+// imported once (lazily) and reused rather than re-imported on every save
+// and every verification.
+let signingKeyPromise: Promise<CryptoKey> | null = null;
+function getSigningKey(): Promise<CryptoKey> {
+  signingKeyPromise ??= crypto.subtle.importKey(
     "raw",
     new TextEncoder().encode(SAVE_SIGNING_SECRET),
     { name: "HMAC", hash: "SHA-256" },
     false,
     ["sign"],
   );
+  return signingKeyPromise;
+}
+
+async function signIdPayload(idsJson: string): Promise<string> {
+  const key = await getSigningKey();
   const signatureBytes = await crypto.subtle.sign(
     "HMAC",
     key,
@@ -570,19 +598,18 @@ async function saveSignedIdSet(storageKey: string, ids: ReadonlySet<number>) {
   );
 }
 
-// Reads whatever is saved without verifying it, for a snappy first paint —
-// legacy unsigned saves (a plain array, from before this feature existed)
-// have nothing to verify anyway and are trusted so upgrading doesn't wipe
-// anyone's existing collection. `verifySignedIdSet` below re-checks new
-// signed saves shortly after mount and resets them if they don't check out.
+// Reads whatever is saved without verifying it, for a snappy first paint.
+// `verifySignedIdSet` below re-checks it shortly after mount and resets it
+// if it doesn't check out. Note this does NOT special-case a bare unsigned
+// array as "legacy and trusted" — that would accept exactly the tampering
+// this feature exists to catch (a bare array is indistinguishable from one
+// someone just pasted into devtools), so an unsigned save is untrusted
+// data, full stop.
 function readRawIdSet(storageKey: string, maxId: number): Set<number> {
   try {
     const raw = window.localStorage.getItem(storageKey);
     if (!raw) return new Set();
     const parsed: unknown = JSON.parse(raw);
-    if (Array.isArray(parsed)) {
-      return new Set(sanitizeIds(parsed, maxId));
-    }
     if (isSignedIdSetPayload(parsed)) {
       return new Set(sanitizeIds(parsed.ids, maxId));
     }
@@ -600,10 +627,6 @@ async function verifySignedIdSet(
     const raw = window.localStorage.getItem(storageKey);
     if (!raw) return new Set();
     const parsed: unknown = JSON.parse(raw);
-    if (Array.isArray(parsed)) {
-      // Legacy unsigned save — nothing to verify, trust it as-is.
-      return new Set(sanitizeIds(parsed, maxId));
-    }
     if (!isSignedIdSetPayload(parsed)) {
       return new Set();
     }
@@ -4093,20 +4116,16 @@ function TypeLandmark({
 
 const ScanEnvironment = memo(function ScanEnvironment({
   animatedSpriteUrl,
-  concealed,
   habitat,
   isEvening,
   isWetWeather,
-  revealAmount,
   spriteUrl,
   typeNames,
 }: {
   animatedSpriteUrl: string | null;
-  concealed: boolean;
   habitat: string;
   isEvening: boolean;
   isWetWeather: boolean;
-  revealAmount: number;
   spriteUrl: string | null;
   typeNames: string[];
 }) {
@@ -4997,7 +5016,9 @@ const ScanEnvironment = memo(function ScanEnvironment({
         <Birds tint="#2b2f33" />
       ) : null}
       {hasMeadow && !isNightBiome && !scene.storm ? <Butterflies /> : null}
-      <group position={[2.4, -1.1, -8.2]} scale={1.75}>
+      {/* The sprite itself is rendered as ScanEnvironment's sibling, not
+          here — see the comment at that render site. */}
+      <group position={SCAN_PODIUM_POSITION} scale={SCAN_PODIUM_SCALE}>
         <mesh castShadow>
           <sphereGeometry args={[0.82, 14, 10]} />
           <meshStandardMaterial color="#d9f0c5" roughness={0.72} />
@@ -5006,12 +5027,6 @@ const ScanEnvironment = memo(function ScanEnvironment({
           <cylinderGeometry args={[0.5, 0.74, 0.28, 10]} />
           <meshStandardMaterial color={scene.foliage} roughness={0.9} />
         </mesh>
-        <ScanTargetSprite
-          animatedSpriteUrl={animatedSpriteUrl}
-          concealed={concealed}
-          revealAmount={revealAmount}
-          spriteUrl={spriteUrl}
-        />
       </group>
       {scene.snow ? <Snowfall /> : null}
       <Rainfall
@@ -5048,6 +5063,11 @@ function useSpriteTexture(url: string | null, onError?: () => void) {
   const totalDurationMsRef = useRef(0);
   const currentFrameIndexRef = useRef(-1);
   const playbackStartRef = useRef(0);
+  // Cursor for the O(1)-amortized frame lookup below: the end time (ms) of
+  // whatever frame the cursor is currently on, and the last elapsed value
+  // seen (to detect the loop wrapping back to the start).
+  const cursorFrameEndMsRef = useRef(0);
+  const lastElapsedMsRef = useRef(0);
   const onErrorRef = useRef(onError);
   onErrorRef.current = onError;
 
@@ -5141,6 +5161,8 @@ function useSpriteTexture(url: string | null, onError?: () => void) {
         canvasTexture.minFilter = NearestFilter;
         currentFrameIndexRef.current = -1;
         playbackStartRef.current = performance.now();
+        cursorFrameEndMsRef.current = framesRef.current[0]?.durationMs ?? 0;
+        lastElapsedMsRef.current = 0;
         setAspect(canvas.width / canvas.height);
         setTexture(canvasTexture);
       } catch {
@@ -5167,14 +5189,18 @@ function useSpriteTexture(url: string | null, onError?: () => void) {
     if (!canvas || !texture || frames.length === 0) return;
 
     const elapsedMs = (performance.now() - playbackStartRef.current) % totalDurationMsRef.current;
-    let accumulatedMs = 0;
-    let frameIndex = frames.length - 1;
-    for (let index = 0; index < frames.length; index++) {
-      accumulatedMs += frames[index].durationMs;
-      if (elapsedMs < accumulatedMs) {
-        frameIndex = index;
-        break;
-      }
+    // Amortized O(1): advance a cursor forward from wherever it already
+    // was instead of rescanning every frame's cumulative duration each
+    // tick. Only rewinds (back to frame 0) when the loop wraps around.
+    if (elapsedMs < lastElapsedMsRef.current) {
+      currentFrameIndexRef.current = -1;
+      cursorFrameEndMsRef.current = frames[0].durationMs;
+    }
+    lastElapsedMsRef.current = elapsedMs;
+    let frameIndex = Math.max(0, currentFrameIndexRef.current);
+    while (elapsedMs >= cursorFrameEndMsRef.current && frameIndex < frames.length - 1) {
+      frameIndex += 1;
+      cursorFrameEndMsRef.current += frames[frameIndex].durationMs;
     }
     if (frameIndex === currentFrameIndexRef.current) return;
     currentFrameIndexRef.current = frameIndex;
@@ -6008,7 +6034,7 @@ function App() {
   const konamiProgressRef = useRef(0);
   const [confettiEventId, setConfettiEventId] = useState(0);
   const [settledConfetti, setSettledConfetti] = useState<
-    Array<{ id: number; level: number }>
+    Array<{ id: number; level: number; palette: ReadonlyArray<readonly [number, number, number]> }>
   >([]);
   const [showShinyCelebration, setShowShinyCelebration] = useState(false);
   const [isShinyRound, setIsShinyRound] = useState(
@@ -6281,7 +6307,15 @@ function App() {
           if (error instanceof DOMException && error.name === "AbortError") {
             throw error;
           }
-          throw new Error("Pokemon not found.");
+          // A real HTTP status (almost always 404) means the query itself
+          // was bad; anything else (offline, DNS, CORS) is a network
+          // problem, not a bad guess — don't tell the user to fix their
+          // spelling when the real issue is connectivity.
+          throw new Error(
+            error instanceof FetchStatusError
+              ? "Pokemon not found."
+              : "Couldn't reach PokeAPI. Check your connection and try again.",
+          );
         }
 
         let flavorText = FLAVOR_TEXT_FALLBACK;
@@ -6640,7 +6674,7 @@ function App() {
             setShowConfetti(false);
             setSettledConfetti((current) => [
               ...current,
-              { id: burstId, level: confettiLevel },
+              { id: burstId, level: confettiLevel, palette: confettiPalette },
             ]);
           }, 5_000);
         }
@@ -6683,6 +6717,7 @@ function App() {
     },
     [
       confettiLevel,
+      confettiPalette,
       isGamePaused,
       isShinyRound,
       pokemonState,
@@ -7035,7 +7070,7 @@ function App() {
                 <WorldConfetti
                   key={`settled-confetti-${burst.id}`}
                   level={burst.level}
-                  palette={confettiPalette}
+                  palette={burst.palette}
                   seed={burst.id}
                   settled
                 />
@@ -7051,15 +7086,27 @@ function App() {
               {showShinyCelebration ? <ShinyBurst /> : null}
               <ScanEnvironment
                 animatedSpriteUrl={animatedSpriteUrl}
-                concealed={mode === "game" && !isGameRoundRevealed}
                 habitat={habitat}
                 isEvening={isEvening}
                 isWetWeather={isWetWeather}
                 key={`${mode === "game" && !isGameRoundRevealed ? "scan-target-silhouette" : "scan-target-visible"}-${animatedSpriteUrl ?? spriteUrl ?? "fallback"}`}
-                revealAmount={silhouetteRevealAmount}
                 spriteUrl={spriteUrl}
                 typeNames={typeNames}
               />
+              {/* Rendered outside ScanEnvironment (rather than as one of its
+                  own children) so the once-a-second `revealAmount` tick
+                  during a round's countdown only re-renders this small
+                  sprite billboard — not ScanEnvironment's whole memoized
+                  terrain subtree, which `revealAmount` used to be a prop
+                  of. */}
+              <group position={SCAN_PODIUM_POSITION} scale={SCAN_PODIUM_SCALE}>
+                <ScanTargetSprite
+                  animatedSpriteUrl={animatedSpriteUrl}
+                  concealed={mode === "game" && !isGameRoundRevealed}
+                  revealAmount={silhouetteRevealAmount}
+                  spriteUrl={spriteUrl}
+                />
+              </group>
               <PokedexModel
                 animatedSpriteUrl={animatedSpriteUrl}
                 concealed={isCurrentGamePokemonConcealed}
