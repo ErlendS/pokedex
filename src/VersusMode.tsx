@@ -7,7 +7,7 @@ type ServerMessage =
   | { type: "host:created"; code: string }
   | { type: "player:joined"; code: string; playerId: string }
   | { type: "room:state"; code: string; players: Player[]; round: Round | null }
-  | { type: "round:started"; number: number; startedAt: number; spriteUrl: string | null; cryUrl: string | null }
+  | { type: "round:started"; number: number; startedAt: number; spriteUrl: string | null; cryUrl: string | null; typeNames: string[] }
   | { type: "round:answer"; playerId: string; name: string; points: number }
   | { type: "guess:result"; correct: boolean; points?: number }
   | { type: "room:closed" }
@@ -15,7 +15,11 @@ type ServerMessage =
 
 const websocketUrl = () => `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/versus`;
 
-export function VersusMode({ onExit }: { onExit: () => void }) {
+export function VersusMode({
+  onRoundVisualChange,
+}: {
+  onRoundVisualChange: (visual: { spriteUrl: string; typeNames: string[] } | null) => void;
+}) {
   const initialCode = useMemo(() => new URLSearchParams(window.location.search).get("versus")?.toUpperCase() ?? "", []);
   const [role, setRole] = useState<"choose" | "host" | "player">(initialCode ? "player" : "choose");
   const [code, setCode] = useState(initialCode);
@@ -47,16 +51,27 @@ export function VersusMode({ onExit }: { onExit: () => void }) {
         setSpriteUrl(message.spriteUrl);
         setGuess("");
         setFeedback("Ny Pokémon — gjett raskest!");
+        onRoundVisualChange(
+          message.spriteUrl
+            ? { spriteUrl: message.spriteUrl, typeNames: message.typeNames }
+            : null,
+        );
         if (message.cryUrl) void new Audio(message.cryUrl).play().catch(() => undefined);
       }
       if (message.type === "round:answer") setFeedback(`${message.name} var raskest: +${message.points}`);
       if (message.type === "guess:result") setFeedback(message.correct ? `Riktig! +${message.points ?? 0} poeng` : "Ikke riktig — prøv igjen!");
-      if (message.type === "room:closed") setFeedback("Verten avsluttet kampen.");
+      if (message.type === "room:closed") {
+        setFeedback("Verten avsluttet kampen.");
+        onRoundVisualChange(null);
+      }
       if (message.type === "error") setFeedback(message.message);
     });
-  }, [code, name]);
+  }, [code, name, onRoundVisualChange]);
 
-  useEffect(() => () => socketRef.current?.close(), []);
+  useEffect(() => () => {
+    socketRef.current?.close();
+    onRoundVisualChange(null);
+  }, [onRoundVisualChange]);
   useEffect(() => {
     if (!code || role !== "host") return;
     const joinUrl = `${window.location.origin}${window.location.pathname}?versus=${code}`;
@@ -71,10 +86,11 @@ export function VersusMode({ onExit }: { onExit: () => void }) {
   };
 
   return (
-    <main className="versus-shell">
+    <div className="versus-panel">
       <header className="versus-header">
-        <div><p className="eyebrow">Live multiplayer</p><h1>Versus Mode</h1></div>
-        <button onClick={onExit} type="button">Tilbake</button>
+        <p className="eyebrow">Live multiplayer</p>
+        <h1>Versus Mode</h1>
+        <p>Samme Pokémon. Samme øyeblikk. Raskeste riktige svar vinner.</p>
       </header>
       {role === "choose" ? (
         <section className="versus-choice">
@@ -106,7 +122,10 @@ export function VersusMode({ onExit }: { onExit: () => void }) {
       ) : null}
       {(role === "host" || connected) ? (
         <section className="versus-arena">
-          <div className="versus-target">{spriteUrl ? <img alt="Mystery Pokémon silhouette" src={spriteUrl} /> : <span>Venter på neste Pokémon</span>}</div>
+          <div className="versus-round-indicator">
+            <span aria-hidden="true" className={spriteUrl ? "is-live" : ""} />
+            {spriteUrl ? `Runde ${round?.number ?? 1} pågår i 3D-scenen` : "Venter på neste Pokémon"}
+          </div>
           {role === "player" && round?.status === "active" ? (
             <form className="versus-guess" onSubmit={(event) => { event.preventDefault(); socketRef.current?.send(JSON.stringify({ type: "player:guess", guess })); }}>
               <input aria-label="Ditt Pokémon-svar" autoComplete="off" autoFocus onChange={(event) => setGuess(event.target.value)} placeholder="Hvem er Pokémonen?" value={guess} />
@@ -117,6 +136,6 @@ export function VersusMode({ onExit }: { onExit: () => void }) {
           <ol className="versus-scoreboard">{players.map((player, index) => <li key={player.id}><span>{index + 1}. {player.name}</span><strong>{player.score}</strong></li>)}</ol>
         </section>
       ) : null}
-    </main>
+    </div>
   );
 }

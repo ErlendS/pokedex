@@ -143,7 +143,7 @@
 
 .mode-switch {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 4px;
   padding: 4px;
   border-radius: 8px;
@@ -1117,57 +1117,52 @@
     padding: 20px;
   }
 }
-/* Versus mode intentionally uses a separate, lightweight layout so a phone
-   can join and answer without mounting the Three.js scene. */
-.versus-shell {
-  min-height: 100vh;
-  padding: clamp(1rem, 4vw, 3rem);
-  background: radial-gradient(circle at 50% 0%, #263b69 0, #11182c 46%, #080b14 100%);
-  color: #f8fbff;
+.versus-panel {
+  display: grid;
+  gap: 16px;
+  color: #14201d;
 }
 
-.versus-header,
-.versus-choice,
-.versus-join,
-.versus-host,
-.versus-arena {
-  width: min(760px, 100%);
-  margin-inline: auto;
+.versus-header h1 {
+  margin: 0;
+  font-size: 32px;
+  letter-spacing: -.03em;
 }
 
-.versus-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
+.versus-header > p:last-child {
+  margin: 8px 0 0;
+  color: #66736f;
+  font-size: 14px;
+  line-height: 1.45;
 }
 
-.versus-shell button {
+.versus-panel button {
   min-height: 44px;
-  border: 1px solid #ffffff36;
-  border-radius: .7rem;
-  padding: .7rem 1rem;
-  color: #f8fbff;
-  background: #ffffff12;
+  border: 1px solid #cad6d1;
+  border-radius: 6px;
+  padding: 0 14px;
+  color: #33413d;
+  background: #ffffff;
   font: inherit;
-  font-weight: 800;
+  font-weight: 700;
   cursor: pointer;
-  transition: transform 140ms ease, background 140ms ease, opacity 140ms ease;
+  transition: background 140ms ease, border-color 140ms ease, opacity 140ms ease;
 }
 
-.versus-shell button:hover:not(:disabled) {
-  background: #ffffff20;
-  transform: translateY(-1px);
+.versus-panel button:hover:not(:disabled) {
+  border-color: #258b69;
+  background: #eff9f4;
 }
 
-.versus-shell button:focus-visible {
-  outline: 3px solid #ffcb3f66;
-  outline-offset: 3px;
+.versus-panel button:focus-visible,
+.versus-panel input:focus-visible {
+  outline: 3px solid rgba(37, 139, 105, 0.24);
+  outline-offset: 2px;
 }
 
-.versus-shell button:disabled {
+.versus-panel button:disabled {
   cursor: not-allowed;
-  opacity: .42;
+  opacity: .48;
 }
 
 .versus-choice,
@@ -1175,13 +1170,11 @@
 .versus-host,
 .versus-arena {
   display: grid;
-  gap: 1rem;
-  margin-top: 1.5rem;
-  padding: clamp(1rem, 4vw, 2rem);
-  border: 1px solid #ffffff2d;
-  border-radius: 1.4rem;
-  background: #101a31e6;
-  box-shadow: 0 22px 70px #0008;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid #d8e2dc;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.72);
 }
 
 .versus-choice { grid-template-columns: 1fr 1fr; }
@@ -1189,35 +1182,39 @@
 .versus-join input,
 .versus-guess input {
   width: 100%;
-  padding: .9rem 1rem;
-  border: 1px solid #ffffff40;
-  border-radius: .8rem;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid #c9d4cf;
+  border-radius: 6px;
   background: #fff;
-  color: #111;
+  color: #14201d;
   font: inherit;
+  box-sizing: border-box;
 }
-.versus-shell .versus-primary {
-  border-color: #ffcb3f;
-  background: linear-gradient(135deg, #ffdf58, #ff9f1c);
-  color: #1f1600;
+.versus-panel .versus-primary {
+  border-color: #c8263e;
+  background: #c8263e;
+  color: #ffffff;
   font-weight: 900;
 }
-.versus-shell .versus-primary:hover:not(:disabled) {
-  background: linear-gradient(135deg, #ffe678, #ffad35);
+.versus-panel .versus-primary:hover:not(:disabled) {
+  border-color: #a91d32;
+  background: #a91d32;
 }
 .versus-code { display: grid; place-items: center; gap: .35rem; }
-.versus-code strong { font-size: clamp(2.8rem, 14vw, 6rem); letter-spacing: .16em; }
+.versus-code > span { color: #66736f; font-size: 13px; font-weight: 700; }
+.versus-code strong { font-size: clamp(2.25rem, 5vw, 3.4rem); letter-spacing: .14em; }
 .versus-qr {
   position: relative;
   display: grid;
   place-items: center;
   overflow: hidden;
   border: 7px solid #fff;
-  border-radius: 1.15rem;
+  border-radius: 10px;
   background: #fff;
-  box-shadow: 0 12px 34px #0007;
+  box-shadow: 0 8px 22px rgba(28, 42, 38, 0.16);
 }
-.versus-qr img { display: block; width: min(260px, 75vw); }
+.versus-qr img { display: block; width: min(200px, 58vw); }
 .versus-qr-mark {
   position: absolute;
   width: 48px;
@@ -1227,19 +1224,43 @@
   background:
     radial-gradient(circle, #fff 0 17%, #15171c 19% 28%, transparent 30%),
     linear-gradient(to bottom, #e6373f 0 43%, #15171c 44% 56%, #fff 57% 100%);
-  box-shadow: 0 3px 12px #0007;
+  box-shadow: 0 3px 10px rgba(20, 32, 29, 0.34);
 }
-.versus-target {
-  display: grid;
-  min-height: 210px;
-  place-items: center;
-  border-radius: 1rem;
-  background: radial-gradient(circle, #d7e3b8 0 35%, #314052 36% 100%);
+.versus-round-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #66736f;
+  font-size: 13px;
+  font-weight: 700;
 }
-.versus-target img { width: min(230px, 65vw); filter: brightness(0); image-rendering: pixelated; }
+.versus-round-indicator > span {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #9aa6a1;
+}
+.versus-round-indicator > span.is-live {
+  background: #c8263e;
+  box-shadow: 0 0 0 5px rgba(200, 38, 62, 0.12);
+}
 .versus-guess { display: grid; grid-template-columns: 1fr auto; gap: .65rem; }
 .versus-scoreboard { display: grid; gap: .5rem; padding: 0; list-style: none; }
-.versus-scoreboard li { display: flex; justify-content: space-between; padding: .8rem 1rem; border-radius: .7rem; background: #ffffff10; }
+.versus-scoreboard li { display: flex; justify-content: space-between; padding: .7rem .8rem; border-radius: 6px; background: rgba(28, 42, 38, 0.06); }
+
+@media (max-width: 860px) {
+  .pokedex-app.is-versus {
+    grid-template-rows: minmax(260px, 40svh) auto;
+  }
+
+  .pokedex-app.is-versus .viewer-shell {
+    min-height: 260px;
+  }
+
+  .pokedex-app.is-versus .versus-panel {
+    order: 0;
+  }
+}
 
 @media (max-width: 560px) {
   .versus-choice { grid-template-columns: 1fr; }

@@ -24,7 +24,9 @@ PORT=8080 pnpm start
 
 A host creates a room and displays a five-character join code and QR code.
 Players scan the QR code (or enter the code), choose a name, and compete to
-identify the same Pokemon. Faster correct answers earn more points.
+identify the same Pokemon. Faster correct answers earn more points. Versus uses
+the same Three.js landscape and Pokedex model as the lookup and solo game modes;
+each synchronized round appears as a silhouette in the shared 3D scene.
 
 Rooms and scores are held in server memory and last for the host connection.
 The current Fly deployment runs a single machine, so all players in a match

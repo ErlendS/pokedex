@@ -11,6 +11,7 @@ test("loads the Pokedex and starts a guessing round", async ({ page }) => {
 test("hosts a versus match, joins from a second device, and awards points", async ({ page, browser }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Versus" }).click();
+  await expect(page.locator("canvas")).toBeVisible();
   await page.getByRole("button", { name: "Start en match" }).click();
   const code = await page.locator(".versus-code strong").textContent();
   expect(code).toMatch(/^[A-Z2-9]{5}$/);
@@ -25,11 +26,13 @@ test("hosts a versus match, joins from a second device, and awards points", asyn
   await expect(page.getByText("Misty")).toBeVisible();
 
   await page.getByRole("button", { name: "Start runden" }).click();
+  await expect(player.getByText(/Runde 1 pågår i 3D-scenen/)).toBeVisible();
+  await expect(player.locator("canvas")).toBeVisible();
   await player.getByLabel("Ditt Pokémon-svar").fill("Pikachu");
   await player.getByRole("button", { name: "Gjett" }).click();
   await expect(player.getByText(/Misty var raskest: \+\d+/)).toBeVisible();
   await expect(page.locator(".versus-scoreboard li")).toContainText(/Misty.*[1-9]\d*/);
-  await player.getByRole("button", { name: "Tilbake" }).click();
+  await player.getByRole("button", { name: "Pokedex" }).click();
   await expect(player).not.toHaveURL(/versus=/);
   await expect(player.getByRole("button", { name: "Pokedex" })).toBeVisible();
   await playerContext.close();

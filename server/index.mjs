@@ -82,7 +82,14 @@ webSockets.on("connection", (socket) => {
       room.roundNumber += 1;
       room.round = { number: room.roundNumber, pokemonId, pokemonName: pokemon.name, startedAt: Date.now(), status: "active", correctCount: 0 };
       room.players.forEach((player) => { player.answeredRound = 0; });
-      broadcast(room, { type: "round:started", number: room.round.number, startedAt: room.round.startedAt, spriteUrl: pokemon.sprites.front_default, cryUrl: pokemon.cries?.latest || pokemon.cries?.legacy || null });
+      broadcast(room, {
+        type: "round:started",
+        number: room.round.number,
+        startedAt: room.round.startedAt,
+        spriteUrl: pokemon.sprites.front_default,
+        cryUrl: pokemon.cries?.latest || pokemon.cries?.legacy || null,
+        typeNames: pokemon.types.map(({ type }) => type.name),
+      });
       return broadcast(room, snapshot(room));
     }
     if (message.type === "player:guess" && socket.role === "player" && room.round?.status === "active") {

@@ -5968,6 +5968,10 @@ function App() {
     getSavedRecentGamePokemonIds,
   );
   const [mode, setMode] = useState<AppMode>(initialMode);
+  const [versusRoundVisual, setVersusRoundVisual] = useState<{
+    spriteUrl: string;
+    typeNames: string[];
+  } | null>(null);
   const [query, setQuery] = useState(INITIAL_QUERY);
   const [initialGamePokemonId] = useState<number | null>(null);
   const [submittedQuery, setSubmittedQuery] = useState(
@@ -6580,7 +6584,7 @@ function App() {
         ? getAnimatedShinySpriteUrl(pokemonState.pokemon.id)
         : getAnimatedSpriteUrl(pokemonState.pokemon.id)
       : null;
-  const typeNames = useMemo(
+  const pokemonTypeNames = useMemo(
     () =>
       pokemonState.status === "ready"
         ? pokemonState.pokemon.types
@@ -6590,6 +6594,18 @@ function App() {
         : ["normal"],
     [pokemonState],
   );
+  const typeNames =
+    mode === "versus" && versusRoundVisual
+      ? versusRoundVisual.typeNames
+      : pokemonTypeNames;
+  const sceneSpriteUrl =
+    mode === "versus" && versusRoundVisual
+      ? versusRoundVisual.spriteUrl
+      : spriteUrl;
+  const sceneAnimatedSpriteUrl = mode === "versus" ? null : animatedSpriteUrl;
+  const isScenePokemonConcealed =
+    isCurrentGamePokemonConcealed ||
+    (mode === "versus" && versusRoundVisual !== null);
   const confettiPalette =
     CONFETTI_TYPE_PALETTES[typeNames[0] ?? "normal"] ?? CONFETTI_TYPE_PALETTES.normal;
   const habitat =
@@ -7049,10 +7065,6 @@ function App() {
         )
       : "";
 
-  if (mode === "versus") {
-    return <VersusMode onExit={() => switchMode("lookup")} />;
-  }
-
   return (
     <>
       <WhosThatPokemonIntro
@@ -7078,7 +7090,7 @@ function App() {
         </div>
       ) : null}
       <main
-        className={`pokedex-app skin-${equippedSkin}${showShinyCelebration ? " is-shaking" : ""}`}
+        className={`pokedex-app skin-${equippedSkin}${mode === "versus" ? " is-versus" : ""}${showShinyCelebration ? " is-shaking" : ""}`}
         style={
           {
             "--skin-hue": equippedSkinDefinition.hue,
@@ -7128,12 +7140,12 @@ function App() {
               ) : null}
               {showShinyCelebration ? <ShinyBurst /> : null}
               <ScanEnvironment
-                animatedSpriteUrl={animatedSpriteUrl}
+                animatedSpriteUrl={sceneAnimatedSpriteUrl}
                 habitat={habitat}
                 isEvening={isEvening}
                 isWetWeather={isWetWeather}
-                key={`${mode === "game" && !isGameRoundRevealed ? "scan-target-silhouette" : "scan-target-visible"}-${animatedSpriteUrl ?? spriteUrl ?? "fallback"}`}
-                spriteUrl={spriteUrl}
+                key={`${isScenePokemonConcealed ? "scan-target-silhouette" : "scan-target-visible"}-${sceneAnimatedSpriteUrl ?? sceneSpriteUrl ?? "fallback"}`}
+                spriteUrl={sceneSpriteUrl}
                 typeNames={typeNames}
               />
               {/* Rendered outside ScanEnvironment (rather than as one of its
@@ -7144,16 +7156,16 @@ function App() {
                   of. */}
               <group position={SCAN_PODIUM_POSITION} scale={SCAN_PODIUM_SCALE}>
                 <ScanTargetSprite
-                  animatedSpriteUrl={animatedSpriteUrl}
-                  concealed={mode === "game" && !isGameRoundRevealed}
+                  animatedSpriteUrl={sceneAnimatedSpriteUrl}
+                  concealed={isScenePokemonConcealed}
                   revealAmount={silhouetteRevealAmount}
-                  spriteUrl={spriteUrl}
+                  spriteUrl={sceneSpriteUrl}
                 />
               </group>
               <PokedexModel
-                animatedSpriteUrl={animatedSpriteUrl}
-                concealed={isCurrentGamePokemonConcealed}
-                flavorText={flavorText}
+                animatedSpriteUrl={sceneAnimatedSpriteUrl}
+                concealed={isScenePokemonConcealed}
+                flavorText={mode === "versus" ? null : flavorText}
                 revealAmount={silhouetteRevealAmount}
                 skin={equippedSkin}
                 showShinyIndicator={
@@ -7164,7 +7176,7 @@ function App() {
                     ? loadPokemonByOffset
                     : () => startNewRound()
                 }
-                spriteUrl={spriteUrl}
+                spriteUrl={sceneSpriteUrl}
                 typeNames={typeNames}
               />
               {companionPokemonId !== null ? (
@@ -7202,13 +7214,18 @@ function App() {
               Who's That Pokemon?
             </button>
             <button
-              aria-pressed="false"
+              aria-pressed={mode === "versus"}
               onClick={() => switchMode("versus")}
               type="button"
             >
               Versus
             </button>
           </div>
+
+          {mode === "versus" ? (
+            <VersusMode onRoundVisualChange={setVersusRoundVisual} />
+          ) : (
+            <>
 
           <div className="round-status">
             <p className="eyebrow">
@@ -7607,6 +7624,8 @@ function App() {
                 </span>
               </div>
             </form>
+          )}
+            </>
           )}
         </section>
       </main>
