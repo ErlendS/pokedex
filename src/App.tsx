@@ -51,6 +51,7 @@ import {
   getSpriteUrl,
   normalizePokemonName,
 } from "./pokemon";
+import { VersusMode } from "./VersusMode";
 import {
   LEGENDARY_SKIN_COST,
   POKEDEX_SKIN_BY_ID,
@@ -182,7 +183,7 @@ type PokemonState =
     }
   | { status: "error"; pokemon: null; error: string; query: "" };
 
-type AppMode = "lookup" | "game";
+type AppMode = "lookup" | "game" | "versus";
 type RoundResult = "guessing" | "correct" | "incorrect" | "timed-out";
 type GameStats = {
   score: number;
@@ -388,9 +389,10 @@ const GAME_GENERATIONS = [
 const DEFAULT_GAME_GENERATIONS = [1, 2];
 
 function getSavedAppMode(): AppMode {
+  if (new URLSearchParams(window.location.search).has("versus")) return "versus";
   const savedMode = window.localStorage.getItem(APP_MODE_STORAGE_KEY);
 
-  return savedMode === "game" ? "game" : "lookup";
+  return savedMode === "game" || savedMode === "versus" ? savedMode : "lookup";
 }
 
 function getSavedGameScore() {
@@ -6619,6 +6621,8 @@ function App() {
       return;
     }
 
+    if (nextMode === "versus") return;
+
     setSubmittedQuery(query);
   };
   const toggleGeneration = (generationId: number) => {
@@ -7037,6 +7041,10 @@ function App() {
         )
       : "";
 
+  if (mode === "versus") {
+    return <VersusMode onExit={() => switchMode("lookup")} />;
+  }
+
   return (
     <>
       <WhosThatPokemonIntro
@@ -7184,6 +7192,13 @@ function App() {
               type="button"
             >
               Who's That Pokemon?
+            </button>
+            <button
+              aria-pressed="false"
+              onClick={() => switchMode("versus")}
+              type="button"
+            >
+              Versus
             </button>
           </div>
 

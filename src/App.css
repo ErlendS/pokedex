@@ -1117,3 +1117,79 @@
     padding: 20px;
   }
 }
+/* Versus mode intentionally uses a separate, lightweight layout so a phone
+   can join and answer without mounting the Three.js scene. */
+.versus-shell {
+  min-height: 100vh;
+  padding: clamp(1rem, 4vw, 3rem);
+  background: radial-gradient(circle at 50% 0%, #263b69 0, #11182c 46%, #080b14 100%);
+  color: #f8fbff;
+}
+
+.versus-header,
+.versus-choice,
+.versus-join,
+.versus-host,
+.versus-arena {
+  width: min(760px, 100%);
+  margin-inline: auto;
+}
+
+.versus-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.versus-choice,
+.versus-join,
+.versus-host,
+.versus-arena {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1.5rem;
+  padding: clamp(1rem, 4vw, 2rem);
+  border: 1px solid #ffffff2d;
+  border-radius: 1.4rem;
+  background: #101a31e6;
+  box-shadow: 0 22px 70px #0008;
+}
+
+.versus-choice { grid-template-columns: 1fr 1fr; }
+.versus-join label { display: grid; gap: .4rem; font-weight: 700; }
+.versus-join input,
+.versus-guess input {
+  width: 100%;
+  padding: .9rem 1rem;
+  border: 1px solid #ffffff40;
+  border-radius: .8rem;
+  background: #fff;
+  color: #111;
+  font: inherit;
+}
+.versus-primary {
+  border-color: #ffcb3f;
+  background: linear-gradient(135deg, #ffdf58, #ff9f1c);
+  color: #1f1600;
+  font-weight: 900;
+}
+.versus-code { display: grid; place-items: center; gap: .35rem; }
+.versus-code strong { font-size: clamp(2.8rem, 14vw, 6rem); letter-spacing: .16em; }
+.versus-code img { width: min(260px, 75vw); border-radius: 1rem; }
+.versus-target {
+  display: grid;
+  min-height: 210px;
+  place-items: center;
+  border-radius: 1rem;
+  background: radial-gradient(circle, #d7e3b8 0 35%, #314052 36% 100%);
+}
+.versus-target img { width: min(230px, 65vw); filter: brightness(0); image-rendering: pixelated; }
+.versus-guess { display: grid; grid-template-columns: 1fr auto; gap: .65rem; }
+.versus-scoreboard { display: grid; gap: .5rem; padding: 0; list-style: none; }
+.versus-scoreboard li { display: flex; justify-content: space-between; padding: .8rem 1rem; border-radius: .7rem; background: #ffffff10; }
+
+@media (max-width: 560px) {
+  .versus-choice { grid-template-columns: 1fr; }
+  .versus-guess { grid-template-columns: 1fr; }
+}

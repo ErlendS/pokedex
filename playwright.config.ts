@@ -7,7 +7,7 @@ export default defineConfig({
     ...devices["Desktop Chrome"],
   },
   webServer: {
-    command: "pnpm dev --host 127.0.0.1 --port 4173 --strictPort",
+    command: "pnpm build && VERSUS_POKEMON_ID=25 PORT=4173 pnpm start",
     port: 4173,
     reuseExistingServer: false,
   },

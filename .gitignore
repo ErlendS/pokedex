@@ -11,6 +11,9 @@ node_modules
 .pnpm-store
 dist
 dist-ssr
+coverage
+test-results
+playwright-report
 *.local
 
 # Editor directories and files

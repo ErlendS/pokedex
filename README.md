@@ -11,11 +11,32 @@ pnpm install
 pnpm dev
 ```
 
+The Vite development server is sufficient for the regular Pokedex UI. Versus
+Mode also needs the WebSocket server. To run the complete production-shaped
+app locally:
+
+```sh
+pnpm build
+PORT=8080 pnpm start
+```
+
+## Versus Mode
+
+A host creates a room and displays a five-character join code and QR code.
+Players scan the QR code (or enter the code), choose a name, and compete to
+identify the same Pokemon. Faster correct answers earn more points.
+
+Rooms and scores are held in server memory and last for the host connection.
+The current Fly deployment runs a single machine, so all players in a match
+connect to the same WebSocket server.
+
 Before pushing a change:
 
 ```sh
 pnpm lint
+pnpm test
 pnpm build
+pnpm test:e2e
 ```
 
 ## Deployment
