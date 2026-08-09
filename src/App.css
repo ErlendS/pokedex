@@ -1201,6 +1201,32 @@
   border-color: #a91d32;
   background: #a91d32;
 }
+.versus-cast-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+.versus-cast-icon {
+  position: relative;
+  width: 20px;
+  height: 15px;
+  overflow: hidden;
+  border: 2px solid currentColor;
+  border-radius: 2px;
+  box-sizing: border-box;
+}
+.versus-cast-icon::before,
+.versus-cast-icon::after {
+  position: absolute;
+  left: -2px;
+  bottom: -2px;
+  content: "";
+  border: 2px solid currentColor;
+  border-radius: 0 100% 0 0;
+}
+.versus-cast-icon::before { width: 9px; height: 9px; }
+.versus-cast-icon::after { width: 3px; height: 3px; }
 .versus-code { display: grid; place-items: center; gap: .35rem; }
 .versus-code > span { color: #66736f; font-size: 13px; font-weight: 700; }
 .versus-code strong { font-size: clamp(2.25rem, 5vw, 3.4rem); letter-spacing: .14em; }
@@ -1306,6 +1332,79 @@
 .versus-guess { display: grid; grid-template-columns: 1fr auto; gap: .65rem; }
 .versus-scoreboard { display: grid; gap: .5rem; padding: 0; list-style: none; }
 .versus-scoreboard li { display: flex; justify-content: space-between; padding: .7rem .8rem; border-radius: 6px; background: rgba(28, 42, 38, 0.06); }
+
+.pokedex-app.is-cast-receiver {
+  grid-template-columns: minmax(0, 1fr) minmax(380px, 29vw);
+  background: #0c1512;
+}
+.pokedex-app.is-cast-receiver .control-panel {
+  padding: clamp(24px, 3vw, 48px);
+  color: #eef8f3;
+  border-left-color: rgba(255, 255, 255, 0.12);
+  background:
+    radial-gradient(circle at 100% 0%, rgba(200, 38, 62, 0.22), transparent 36%),
+    rgba(8, 18, 15, 0.94);
+}
+.cast-receiver-panel {
+  display: grid;
+  align-content: start;
+  gap: clamp(16px, 2.2vh, 28px);
+}
+.cast-receiver-header h1 {
+  margin: 0;
+  color: #ffffff;
+  font-size: clamp(2rem, 3.4vw, 4rem);
+  line-height: .95;
+  letter-spacing: -.05em;
+}
+.cast-receiver-header > p:last-child {
+  margin: 12px 0 0;
+  color: #a9bbb4;
+  line-height: 1.5;
+}
+.cast-room-card,
+.cast-round-card {
+  display: grid;
+  gap: 16px;
+  padding: clamp(16px, 2vw, 26px);
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.18);
+}
+.cast-room-card {
+  grid-template-columns: minmax(0, 1fr) 104px;
+  align-items: center;
+}
+.cast-room-card > div:first-child { display: grid; gap: 5px; }
+.cast-room-card > div:first-child span { color: #a9bbb4; font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: .1em; }
+.cast-room-card > div:first-child strong { font-size: clamp(2rem, 3vw, 3.5rem); letter-spacing: .1em; line-height: 1; }
+.cast-receiver-qr { border-width: 5px; }
+.cast-receiver-qr img { width: 100px; }
+.cast-receiver-qr .versus-qr-mark { width: 38px; border-width: 5px; }
+.cast-receiver-panel .versus-round-indicator { color: #a9bbb4; font-size: 15px; }
+.cast-receiver-panel .versus-countdown-label { color: #a9bbb4; font-size: 14px; }
+.cast-receiver-panel .versus-countdown-label strong { color: #fff; font-size: 22px; }
+.cast-receiver-panel .versus-progress { height: 16px; background: rgba(255, 255, 255, 0.12); }
+.cast-receiver-panel .versus-answer {
+  color: #14201d;
+  padding: 18px;
+  border-radius: 12px;
+}
+.cast-receiver-panel .versus-answer strong { font-size: clamp(2rem, 3vw, 3.5rem); }
+.cast-scoreboard { margin: 0; }
+.cast-scoreboard li {
+  padding: 14px 16px;
+  color: #eef8f3;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: clamp(1rem, 1.35vw, 1.35rem);
+}
+
+@media (max-aspect-ratio: 4 / 3) {
+  .pokedex-app.is-cast-receiver { grid-template-columns: minmax(0, 1fr) 360px; }
+  .cast-room-card { grid-template-columns: 1fr; }
+  .cast-receiver-qr { display: none; }
+}
 
 @media (max-width: 860px) {
   .pokedex-app.is-versus {

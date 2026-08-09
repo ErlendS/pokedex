@@ -28,9 +28,44 @@ identify the same Pokemon. Faster correct answers earn more points. Versus uses
 the same Three.js landscape and Pokedex model as the lookup and solo game modes;
 each synchronized round appears as a silhouette in the shared 3D scene.
 
-Rooms and scores are held in server memory and last for the host connection.
-The current Fly deployment runs a single machine, so all players in a match
-connect to the same WebSocket server.
+Rooms and scores are held in server memory and remain active while a controller,
+Cast display, or player is connected. The current Fly deployment runs a single
+machine, so all clients in a match connect to the same WebSocket server.
+
+### Google Cast receiver
+
+Versus includes a complete Custom Web Receiver at:
+
+```text
+https://pokedex.flawed.tech/cast
+```
+
+The phone that creates the room is both the match controller and a player. The
+Cast receiver joins the same room as a display-only client, renders the shared
+Three.js scene, join QR code, timer, answer reveal, and scoreboard. Other phones
+continue to join through the normal QR link.
+
+To enable the **Cast to TV** button after this code is deployed:
+
+1. Create a **Custom Receiver** in the
+   [Google Cast SDK Developer Console](https://cast.google.com/publish/).
+2. Use `https://pokedex.flawed.tech/cast` as its receiver URL.
+3. Copy the generated application ID into the Fly runtime:
+
+   ```sh
+   fly secrets set CAST_APP_ID=YOUR_APPLICATION_ID
+   ```
+
+No frontend rebuild or code change is required. The Node server exposes the ID
+through `/api/cast-config`, and the sender SDK is loaded only when an ID exists.
+The sender and receiver communicate on
+`urn:x-cast:tech.flawed.pokedex.versus`; gameplay state continues to travel
+through the existing `/versus` WebSocket connection.
+
+For unpublished testing, register the physical Cast device in the same Cast
+Developer Console account. `/cast?room=ABCDE` is also available as a browser
+debug route and is covered by the end-to-end suite; production Cast launches
+use the SDK message channel instead of a room code in the receiver URL.
 
 Before pushing a change:
 

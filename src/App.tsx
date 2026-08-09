@@ -51,6 +51,7 @@ import {
   getSpriteUrl,
   normalizePokemonName,
 } from "./pokemon";
+import { CastReceiverMode } from "./CastReceiverMode";
 import { VersusMode } from "./VersusMode";
 import {
   LEGENDARY_SKIN_COST,
@@ -389,6 +390,7 @@ const GAME_GENERATIONS = [
 const DEFAULT_GAME_GENERATIONS = [1, 2];
 
 function getSavedAppMode(): AppMode {
+  if (window.location.pathname === "/cast") return "versus";
   if (new URLSearchParams(window.location.search).has("versus")) return "versus";
   const savedMode = window.localStorage.getItem(APP_MODE_STORAGE_KEY);
 
@@ -5960,6 +5962,7 @@ function PokemonScanner({ onScan }: { onScan: (query: string) => void }) {
 }
 
 function App() {
+  const isCastReceiver = window.location.pathname === "/cast";
   const initialMode = getSavedAppMode();
   const [selectedGenerations, setSelectedGenerations] = useState<number[]>(
     getSavedGameGenerations,
@@ -7068,11 +7071,13 @@ function App() {
 
   return (
     <>
-      <WhosThatPokemonIntro
-        isMuted={isIntroMuted}
-        onComplete={() => setIsIntroComplete(true)}
-        playbackKey={introPlaybackKey}
-      />
+      {isCastReceiver ? null : (
+        <WhosThatPokemonIntro
+          isMuted={isIntroMuted}
+          onComplete={() => setIsIntroComplete(true)}
+          playbackKey={introPlaybackKey}
+        />
+      )}
       {showShinyCelebration ? (
         <div aria-hidden="true" className="shiny-fireworks">
           {Array.from({ length: 42 }, (_, index) => (
@@ -7091,7 +7096,7 @@ function App() {
         </div>
       ) : null}
       <main
-        className={`pokedex-app skin-${equippedSkin}${mode === "versus" ? " is-versus" : ""}${showShinyCelebration ? " is-shaking" : ""}`}
+        className={`pokedex-app skin-${equippedSkin}${mode === "versus" ? " is-versus" : ""}${isCastReceiver ? " is-cast-receiver" : ""}${showShinyCelebration ? " is-shaking" : ""}`}
         style={
           {
             "--skin-hue": equippedSkinDefinition.hue,
@@ -7198,7 +7203,11 @@ function App() {
           </Canvas>
         </section>
 
-        <section className="control-panel" aria-label="Pokedex controls">
+        <section className="control-panel" aria-label={isCastReceiver ? "Versus Cast display" : "Pokedex controls"}>
+          {isCastReceiver ? (
+            <CastReceiverMode onRoundVisualChange={setVersusRoundVisual} />
+          ) : (
+            <>
           <div className="mode-switch" aria-label="Pokedex mode">
             <button
               aria-pressed={mode === "lookup"}
@@ -7625,6 +7634,8 @@ function App() {
                 </span>
               </div>
             </form>
+          )}
+            </>
           )}
             </>
           )}

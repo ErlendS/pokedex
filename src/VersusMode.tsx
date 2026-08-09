@@ -1,46 +1,27 @@
 import QRCode from "qrcode";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-
-type Player = { id: string; name: string; score: number };
-type Round = {
-  number: number;
-  startedAt: number;
-  endsAt: number;
-  status: "active" | "revealed";
-  spriteUrl: string | null;
-  typeNames: string[];
-  revealedAt: number | null;
-  revealUntil: number | null;
-  answer: string | null;
-};
-type ServerMessage =
-  | { type: "host:created"; code: string }
-  | { type: "player:joined"; code: string; playerId: string }
-  | { type: "room:state"; code: string; players: Player[]; round: Round | null }
-  | ({ type: "round:started"; cryUrl: string | null } & Round)
-  | ({ type: "round:revealed" } & Round)
-  | { type: "round:answer"; playerId: string; name: string; points: number }
-  | { type: "guess:result"; correct: boolean; points?: number }
-  | { type: "room:closed" }
-  | { type: "error"; message: string };
-
-const websocketUrl = () => `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/versus`;
-const formatPokemonName = (value: string | null) =>
-  value
-    ? value.split("-").map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`).join(" ")
-    : "Unknown Pokémon";
+import { useCastSender } from "./useCastSender";
+import {
+  createVersusJoinUrl,
+  formatVersusPokemonName,
+  getVersusWebSocketUrl,
+  type VersusPlayer,
+  type VersusRound,
+  type VersusRoundVisual,
+  type VersusServerMessage,
+} from "./versus";
 
 export function VersusMode({
   onRoundVisualChange,
 }: {
-  onRoundVisualChange: (visual: { spriteUrl: string; typeNames: string[]; concealed: boolean } | null) => void;
+  onRoundVisualChange: (visual: VersusRoundVisual | null) => void;
 }) {
   const initialCode = useMemo(() => new URLSearchParams(window.location.search).get("versus")?.toUpperCase() ?? "", []);
-  const [role, setRole] = useState<"choose" | "host" | "player">(initialCode ? "player" : "choose");
+  const [role, setRole] = useState<"choose" | "host-setup" | "host" | "player">(initialCode ? "player" : "choose");
   const [code, setCode] = useState(initialCode);
   const [name, setName] = useState("");
-  const [players, setPlayers] = useState<Player[]>([]);
-  const [round, setRound] = useState<Round | null>(null);
+  const [players, setPlayers] = useState<VersusPlayer[]>([]);
+  const [round, setRound] = useState<VersusRound | null>(null);
   const [guess, setGuess] = useState("");
   const [feedback, setFeedback] = useState("");
   const [qrUrl, setQrUrl] = useState("");
@@ -49,18 +30,19 @@ export function VersusMode({
   const [serverOffsetMs, setServerOffsetMs] = useState(0);
   const [answeredRoundNumber, setAnsweredRoundNumber] = useState<number | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
+  const { castRoom, error: castError, status: castStatus } = useCastSender(code);
 
   const connect = useCallback((nextRole: "host" | "player", joinCode = code, playerName = name) => {
     socketRef.current?.close();
-    const socket = new WebSocket(websocketUrl());
+    const socket = new WebSocket(getVersusWebSocketUrl());
     socketRef.current = socket;
     socket.addEventListener("open", () => {
       setConnected(true);
-      socket.send(JSON.stringify(nextRole === "host" ? { type: "host:create" } : { type: "player:join", code: joinCode, name: playerName }));
+      socket.send(JSON.stringify(nextRole === "host" ? { type: "host:create", name: playerName } : { type: "player:join", code: joinCode, name: playerName }));
     });
     socket.addEventListener("close", () => setConnected(false));
     socket.addEventListener("message", (event) => {
-      const message = JSON.parse(event.data) as ServerMessage & { serverNow: number };
+      const message = JSON.parse(event.data) as VersusServerMessage & { serverNow: number };
       setServerOffsetMs(message.serverNow - Date.now());
       if (message.type === "host:created" || message.type === "player:joined") setCode(message.code);
       if (message.type === "room:state") {
@@ -90,7 +72,7 @@ export function VersusMode({
       }
       if (message.type === "round:revealed") {
         setRound(message);
-        setFeedback(`The answer is ${formatPokemonName(message.answer)}.`);
+        setFeedback(`The answer is ${formatVersusPokemonName(message.answer)}.`);
         if (message.spriteUrl) {
           onRoundVisualChange({
             spriteUrl: message.spriteUrl,
@@ -123,11 +105,15 @@ export function VersusMode({
   }, [onRoundVisualChange]);
   useEffect(() => {
     if (!code || role !== "host") return;
-    const joinUrl = `${window.location.origin}${window.location.pathname}?versus=${code}`;
+    const joinUrl = createVersusJoinUrl(code, { origin: window.location.origin, pathname: "/" });
     void QRCode.toDataURL(joinUrl, { errorCorrectionLevel: "H", margin: 2, width: 260 }).then(setQrUrl);
   }, [code, role]);
 
-  const startHosting = () => { setRole("host"); connect("host"); };
+  const startHosting = () => {
+    if (!name.trim()) return setFeedback("Enter your name to create a match.");
+    setRole("host");
+    connect("host", "", name.trim());
+  };
   const join = () => {
     if (!code.trim() || !name.trim()) return setFeedback("Enter your name and join code.");
     setRole("player");
@@ -155,9 +141,16 @@ export function VersusMode({
       </header>
       {role === "choose" ? (
         <section className="versus-choice">
-          <button className="versus-primary" onClick={startHosting} type="button">Start a match</button>
+          <button className="versus-primary" onClick={() => setRole("host-setup")} type="button">Start a match</button>
           <button onClick={() => setRole("player")} type="button">Join</button>
         </section>
+      ) : null}
+      {role === "host-setup" ? (
+        <form className="versus-join" onSubmit={(event) => { event.preventDefault(); startHosting(); }}>
+          <label>Your name<input autoComplete="nickname" autoFocus maxLength={24} onChange={(event) => setName(event.target.value)} value={name} /></label>
+          <button className="versus-primary" type="submit">Create match</button>
+          <button onClick={() => setRole("choose")} type="button">Back</button>
+        </form>
       ) : null}
       {role === "player" && !connected ? (
         <form className="versus-join" onSubmit={(event) => { event.preventDefault(); join(); }}>
@@ -181,6 +174,22 @@ export function VersusMode({
           <button className="versus-primary" disabled={!connected || players.length === 0 || round !== null} onClick={() => socketRef.current?.send(JSON.stringify({ type: "host:start" }))} type="button">
             {round?.status === "active" ? "Round in progress" : round?.status === "revealed" ? `Next round in ${remainingSeconds}s` : "Start round"}
           </button>
+          <button
+            className="versus-cast-button"
+            disabled={["loading", "unconfigured", "unavailable", "connecting"].includes(castStatus)}
+            onClick={() => void castRoom()}
+            type="button"
+          >
+            <span aria-hidden="true" className="versus-cast-icon" />
+            {castStatus === "connected"
+              ? "Casting to TV"
+              : castStatus === "connecting"
+                ? "Connecting to TV…"
+                : castStatus === "unconfigured"
+                  ? "Cast setup pending"
+                  : "Cast to TV"}
+          </button>
+          {castError ? <p className="status error">{castError}</p> : null}
         </section>
       ) : null}
       {(role === "host" || connected) ? (
@@ -214,11 +223,11 @@ export function VersusMode({
           {round?.status === "revealed" && round.answer ? (
             <div className="versus-answer" aria-live="assertive">
               <span>The answer is</span>
-              <strong>{formatPokemonName(round.answer)}</strong>
+              <strong>{formatVersusPokemonName(round.answer)}</strong>
               <small>Shown for 15 seconds before the next round.</small>
             </div>
           ) : null}
-          {role === "player" && round?.status === "active" ? (
+          {(role === "player" || role === "host") && round?.status === "active" ? (
             <form className="versus-guess" onSubmit={(event) => { event.preventDefault(); submitGuess(); }}>
               <input aria-label="Your Pokémon answer" autoComplete="off" autoFocus disabled={hasAnsweredCurrentRound} onChange={(event) => setGuess(event.target.value)} placeholder="Who's that Pokémon?" value={guess} />
               <button className="versus-primary" disabled={hasAnsweredCurrentRound || !guess.trim()} type="submit">{hasAnsweredCurrentRound ? "Answered" : "Guess"}</button>
