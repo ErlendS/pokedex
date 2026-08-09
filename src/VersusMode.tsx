@@ -60,7 +60,7 @@ export function VersusMode({ onExit }: { onExit: () => void }) {
   useEffect(() => {
     if (!code || role !== "host") return;
     const joinUrl = `${window.location.origin}${window.location.pathname}?versus=${code}`;
-    void QRCode.toDataURL(joinUrl, { margin: 1, width: 260 }).then(setQrUrl);
+    void QRCode.toDataURL(joinUrl, { errorCorrectionLevel: "H", margin: 2, width: 260 }).then(setQrUrl);
   }, [code, role]);
 
   const startHosting = () => { setRole("host"); connect("host"); };
@@ -91,7 +91,16 @@ export function VersusMode({ onExit }: { onExit: () => void }) {
       ) : null}
       {role === "host" && code ? (
         <section className="versus-host">
-          <div className="versus-code"><span>Join-kode</span><strong>{code}</strong>{qrUrl ? <img alt={`QR-kode for match ${code}`} src={qrUrl} /> : null}</div>
+          <div className="versus-code">
+            <span>Join-kode</span>
+            <strong>{code}</strong>
+            {qrUrl ? (
+              <div className="versus-qr">
+                <img alt={`QR-kode for match ${code}`} src={qrUrl} />
+                <span aria-hidden="true" className="versus-qr-mark" />
+              </div>
+            ) : null}
+          </div>
           <button className="versus-primary" disabled={!connected || players.length === 0} onClick={() => socketRef.current?.send(JSON.stringify({ type: "host:start" }))} type="button">{round ? "Neste Pokémon" : "Start runden"}</button>
         </section>
       ) : null}

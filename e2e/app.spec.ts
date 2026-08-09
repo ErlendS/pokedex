@@ -15,6 +15,7 @@ test("hosts a versus match, joins from a second device, and awards points", asyn
   const code = await page.locator(".versus-code strong").textContent();
   expect(code).toMatch(/^[A-Z2-9]{5}$/);
   await expect(page.getByAltText(/QR-kode for match/)).toBeVisible();
+  await expect(page.locator(".versus-qr-mark")).toBeVisible();
 
   const playerContext = await browser.newContext();
   const player = await playerContext.newPage();

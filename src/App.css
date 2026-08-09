@@ -1142,6 +1142,34 @@
   gap: 1rem;
 }
 
+.versus-shell button {
+  min-height: 44px;
+  border: 1px solid #ffffff36;
+  border-radius: .7rem;
+  padding: .7rem 1rem;
+  color: #f8fbff;
+  background: #ffffff12;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+  transition: transform 140ms ease, background 140ms ease, opacity 140ms ease;
+}
+
+.versus-shell button:hover:not(:disabled) {
+  background: #ffffff20;
+  transform: translateY(-1px);
+}
+
+.versus-shell button:focus-visible {
+  outline: 3px solid #ffcb3f66;
+  outline-offset: 3px;
+}
+
+.versus-shell button:disabled {
+  cursor: not-allowed;
+  opacity: .42;
+}
+
 .versus-choice,
 .versus-join,
 .versus-host,
@@ -1168,15 +1196,39 @@
   color: #111;
   font: inherit;
 }
-.versus-primary {
+.versus-shell .versus-primary {
   border-color: #ffcb3f;
   background: linear-gradient(135deg, #ffdf58, #ff9f1c);
   color: #1f1600;
   font-weight: 900;
 }
+.versus-shell .versus-primary:hover:not(:disabled) {
+  background: linear-gradient(135deg, #ffe678, #ffad35);
+}
 .versus-code { display: grid; place-items: center; gap: .35rem; }
 .versus-code strong { font-size: clamp(2.8rem, 14vw, 6rem); letter-spacing: .16em; }
-.versus-code img { width: min(260px, 75vw); border-radius: 1rem; }
+.versus-qr {
+  position: relative;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 7px solid #fff;
+  border-radius: 1.15rem;
+  background: #fff;
+  box-shadow: 0 12px 34px #0007;
+}
+.versus-qr img { display: block; width: min(260px, 75vw); }
+.versus-qr-mark {
+  position: absolute;
+  width: 48px;
+  aspect-ratio: 1;
+  border: 6px solid #fff;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle, #fff 0 17%, #15171c 19% 28%, transparent 30%),
+    linear-gradient(to bottom, #e6373f 0 43%, #15171c 44% 56%, #fff 57% 100%);
+  box-shadow: 0 3px 12px #0007;
+}
 .versus-target {
   display: grid;
   min-height: 210px;
