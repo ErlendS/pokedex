@@ -6616,6 +6616,14 @@ function App() {
   const switchMode = (nextMode: AppMode) => {
     setMode(nextMode);
 
+    if (nextMode !== "versus") {
+      const url = new URL(window.location.href);
+      if (url.searchParams.has("versus")) {
+        url.searchParams.delete("versus");
+        window.history.replaceState({}, "", url);
+      }
+    }
+
     if (nextMode === "game") {
       startNewRound();
       return;

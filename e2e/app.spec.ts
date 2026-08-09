@@ -29,5 +29,8 @@ test("hosts a versus match, joins from a second device, and awards points", asyn
   await player.getByRole("button", { name: "Gjett" }).click();
   await expect(player.getByText(/Misty var raskest: \+\d+/)).toBeVisible();
   await expect(page.locator(".versus-scoreboard li")).toContainText(/Misty.*[1-9]\d*/);
+  await player.getByRole("button", { name: "Tilbake" }).click();
+  await expect(player).not.toHaveURL(/versus=/);
+  await expect(player.getByRole("button", { name: "Pokedex" })).toBeVisible();
   await playerContext.close();
 });
