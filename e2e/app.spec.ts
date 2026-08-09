@@ -49,6 +49,8 @@ test("hosts a versus match, joins from a second device, and awards points", asyn
   await secondPlayer.getByRole("button", { name: "Join match" }).click();
   await expect(page.getByText("Misty")).toBeVisible();
 
+  await page.getByRole("button", { name: "Generation III" }).click();
+  await expect(page.getByRole("button", { name: "Generation III" })).toHaveAttribute("aria-pressed", "true");
   await page.getByRole("button", { name: "Start round" }).click();
   await expect(page.getByText(/Round 1 is live on the display/)).toBeVisible();
   await expect(firstPlayer.getByText(/Round 1 — enter your guess/)).toBeVisible();
@@ -77,10 +79,12 @@ test("hosts a versus match, joins from a second device, and awards points", asyn
   const revealDeadline = Number(await page.locator(".versus-countdown").getAttribute("data-deadline"));
   const revealStartedAt = Number(await page.locator(".versus-countdown").getAttribute("data-started-at"));
   expect(revealDeadline - revealStartedAt).toBe(15_000);
+  await expect(firstPlayer.getByRole("button", { name: "Skip wait" })).toHaveCount(0);
   await expect(page.locator(".versus-scoreboard li").filter({ hasText: "Ash" })).toContainText(/[1-9]\d*/);
   await expect(page.locator(".versus-scoreboard li").filter({ hasText: "Misty" })).toContainText(/0/);
 
-  await expect(page.getByText(/Round 2 is live on the display/)).toBeVisible({ timeout: 25_000 });
+  await page.getByRole("button", { name: "Skip wait" }).click();
+  await expect(page.getByText(/Round 2 is live on the display/)).toBeVisible({ timeout: 10_000 });
   await expect(display.getByText(/Round 2 — guess now/)).toBeVisible();
   await expect(page.getByText("The answer is", { exact: true })).not.toBeVisible();
   await expect(firstPlayer.getByLabel("Your Pokémon answer")).toBeVisible();

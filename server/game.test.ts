@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   calculatePoints,
   createRoomCode,
+  DEFAULT_VERSUS_GENERATIONS,
   DEFAULT_REVEAL_DURATION_MS,
   DEFAULT_ROUND_DURATION_MS,
   normalizeGuess,
+  normalizeGenerationIds,
+  pickPokemonIdForGenerations,
   serializeRound,
 } from "./game.mjs";
 
@@ -25,6 +28,17 @@ describe("versus game rules", () => {
   it("uses a 30 second round and a 15 second answer reveal", () => {
     expect(DEFAULT_ROUND_DURATION_MS).toBe(30_000);
     expect(DEFAULT_REVEAL_DURATION_MS).toBe(15_000);
+  });
+
+  it("normalizes the host generation selection and preserves at least one generation", () => {
+    expect(normalizeGenerationIds([9, 3, 3, 100, "2"])).toEqual([3, 9]);
+    expect(normalizeGenerationIds([])).toEqual(DEFAULT_VERSUS_GENERATIONS);
+  });
+
+  it("picks Pokémon only from the selected generations", () => {
+    expect(pickPokemonIdForGenerations([3], () => 0)).toBe(252);
+    expect(pickPokemonIdForGenerations([3], () => 0.9999)).toBe(386);
+    expect(pickPokemonIdForGenerations([1, 9], () => 0.9999)).toBe(1025);
   });
 
   it("withholds Pokémon visuals and answers from phone controllers", () => {

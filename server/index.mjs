@@ -6,9 +6,12 @@ import { WebSocketServer } from "ws";
 import {
   calculatePoints,
   createRoomCode,
+  DEFAULT_VERSUS_GENERATIONS,
   DEFAULT_REVEAL_DURATION_MS,
   DEFAULT_ROUND_DURATION_MS,
   normalizeGuess,
+  normalizeGenerationIds,
+  pickPokemonIdForGenerations,
   serializeRound,
 } from "./game.mjs";
 
@@ -53,11 +56,11 @@ const closeRoomIfEmpty = (room) => {
   if (!room.host && room.players.size === 0 && room.displays.size === 0) closeRoom(room);
 };
 
-const loadRoundPokemon = async () => {
+const loadRoundPokemon = async (generationIds) => {
   const forcedPokemonId = Number(process.env.VERSUS_POKEMON_ID);
   const pokemonId = Number.isInteger(forcedPokemonId) && forcedPokemonId > 0
     ? forcedPokemonId
-    : 1 + Math.floor(Math.random() * 251);
+    : pickPokemonIdForGenerations(generationIds);
   const response = await fetch(`https://pokeapi.co/api/v2/pokemon/${pokemonId}`);
   if (!response.ok) throw new Error("Could not load Pokemon.");
   return response.json();
@@ -73,7 +76,7 @@ const startRound = async (room, { afterReveal = false } = {}) => {
   ) return;
   room.isStarting = true;
   try {
-    const pokemon = await loadRoundPokemon();
+    const pokemon = await loadRoundPokemon(room.generationIds);
     if (!rooms.has(room.code) || room.players.size === 0) return;
     clearTimeout(room.roundTimer);
     const startedAt = Date.now();
@@ -161,7 +164,17 @@ webSockets.on("connection", (socket) => {
     try { message = JSON.parse(raw.toString()); } catch { return send(socket, { type: "error", message: "Invalid message." }); }
     if (message.type === "host:create") {
       const code = createRoomCode(rooms);
-      const room = { code, host: socket, players: new Map(), displays: new Set(), round: null, roundNumber: 0, roundTimer: null, isStarting: false };
+      const room = {
+        code,
+        host: socket,
+        players: new Map(),
+        displays: new Set(),
+        generationIds: [...DEFAULT_VERSUS_GENERATIONS],
+        round: null,
+        roundNumber: 0,
+        roundTimer: null,
+        isStarting: false,
+      };
       rooms.set(code, room);
       socket.roomCode = code;
       socket.role = "host";
@@ -194,7 +207,12 @@ webSockets.on("connection", (socket) => {
     const room = rooms.get(socket.roomCode);
     if (!room) return send(socket, { type: "error", message: "Match not found." });
     if (message.type === "host:start" && socket.role === "host") {
+      if (room.roundNumber === 0) room.generationIds = normalizeGenerationIds(message.generationIds);
       return void startRound(room);
+    }
+    if (message.type === "host:skip-reveal" && socket.role === "host" && room.round?.status === "revealed") {
+      clearTimeout(room.roundTimer);
+      return void startRound(room, { afterReveal: true });
     }
     if (message.type === "player:guess" && socket.playerId && room.round?.status === "active") {
       const player = room.players.get(socket.playerId);

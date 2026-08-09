@@ -1230,6 +1230,44 @@
 .versus-code { display: grid; place-items: center; gap: .35rem; }
 .versus-code > span { color: #66736f; font-size: 13px; font-weight: 700; }
 .versus-code strong { font-size: clamp(2.25rem, 5vw, 3.4rem); letter-spacing: .14em; }
+.versus-generation-picker {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 14px;
+  border: 1px solid rgba(28, 42, 38, 0.12);
+  border-radius: 8px;
+}
+.versus-generation-picker legend {
+  padding: 0 5px;
+  font-size: 13px;
+  font-weight: 900;
+}
+.versus-generation-picker p {
+  margin: 0;
+  color: #66736f;
+  font-size: 12px;
+}
+.versus-generation-picker > div {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+}
+.versus-generation-picker button {
+  min-width: 0;
+  min-height: 38px;
+  padding: 0;
+}
+.versus-generation-picker button[aria-pressed="true"] {
+  border-color: #258b69;
+  color: #ffffff;
+  background: #258b69;
+}
+.versus-skip-wait {
+  border-color: #d69a16 !important;
+  color: #6c520f !important;
+  background: #fff6d8 !important;
+}
 .versus-qr {
   position: relative;
   display: grid;
@@ -1467,5 +1505,6 @@
     box-sizing: border-box;
   }
   .versus-choice { grid-template-columns: 1fr; }
+  .versus-generation-picker > div { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .versus-guess { grid-template-columns: 1fr; }
 }

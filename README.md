@@ -28,6 +28,9 @@ identify the same Pokemon. Faster correct answers earn more points. The host is
 not a player: it shows the shared Three.js scene, timer, answer, and scoreboard.
 Joined phones are lightweight controllers with only the join and guess inputs;
 the server withholds Pokemon artwork, type data, cries, and answers from them.
+Before round one, the host selects one or more Pokemon generations for the
+match. After an answer reveal, the host can skip the remaining 15-second wait
+and start the next round immediately.
 
 Rooms and scores are held in server memory and remain active while a controller,
 Cast display, or player is connected. The current Fly deployment runs a single

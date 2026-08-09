@@ -3,12 +3,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useCastSender } from "./useCastSender";
 import {
   createVersusJoinUrl,
+  DEFAULT_VERSUS_GENERATIONS,
   formatVersusPokemonName,
   getVersusWebSocketUrl,
   type VersusPlayer,
   type VersusRound,
   type VersusRoundVisual,
   type VersusServerMessage,
+  VERSUS_GENERATIONS,
 } from "./versus";
 
 export function VersusMode({
@@ -31,6 +33,7 @@ export function VersusMode({
   const [clockNow, setClockNow] = useState(Date.now);
   const [serverOffsetMs, setServerOffsetMs] = useState(0);
   const [answeredRoundNumber, setAnsweredRoundNumber] = useState<number | null>(null);
+  const [selectedGenerations, setSelectedGenerations] = useState<number[]>(DEFAULT_VERSUS_GENERATIONS);
   const socketRef = useRef<WebSocket | null>(null);
   const { castRoom, error: castError, status: castStatus } = useCastSender(code, role === "host");
 
@@ -141,6 +144,14 @@ export function VersusMode({
     setAnsweredRoundNumber(round.number);
     socketRef.current?.send(JSON.stringify({ type: "player:guess", guess }));
   };
+  const toggleGeneration = (generationId: number) => {
+    setSelectedGenerations((current) => {
+      if (current.includes(generationId)) {
+        return current.length === 1 ? current : current.filter((id) => id !== generationId);
+      }
+      return [...current, generationId].sort((left, right) => left - right);
+    });
+  };
 
   return (
     <div className="versus-panel">
@@ -175,7 +186,30 @@ export function VersusMode({
               </div>
             ) : null}
           </div>
-          <button className="versus-primary" disabled={!connected || players.length === 0 || round !== null} onClick={() => socketRef.current?.send(JSON.stringify({ type: "host:start" }))} type="button">
+          {round === null ? (
+            <fieldset className="versus-generation-picker">
+              <legend>Pokémon generations</legend>
+              <p>Choose one or more generations before starting.</p>
+              <div>
+                {VERSUS_GENERATIONS.map((generation) => {
+                  const isSelected = selectedGenerations.includes(generation.id);
+                  return (
+                    <button
+                      aria-label={generation.label}
+                      aria-pressed={isSelected}
+                      disabled={isSelected && selectedGenerations.length === 1}
+                      key={generation.id}
+                      onClick={() => toggleGeneration(generation.id)}
+                      type="button"
+                    >
+                      {generation.label.replace("Generation ", "")}
+                    </button>
+                  );
+                })}
+              </div>
+            </fieldset>
+          ) : null}
+          <button className="versus-primary" disabled={!connected || players.length === 0 || round !== null} onClick={() => socketRef.current?.send(JSON.stringify({ type: "host:start", generationIds: selectedGenerations }))} type="button">
             {round?.status === "active" ? "Round in progress" : round?.status === "revealed" ? `Next round in ${remainingSeconds}s` : "Start round"}
           </button>
           {["ready", "connecting", "connected"].includes(castStatus) ? (
@@ -229,11 +263,20 @@ export function VersusMode({
             </div>
           ) : null}
           {role === "host" && round?.status === "revealed" && round.answer ? (
-            <div className="versus-answer" aria-live="assertive">
-              <span>The answer is</span>
-              <strong>{formatVersusPokemonName(round.answer)}</strong>
-              <small>Shown for 15 seconds before the next round.</small>
-            </div>
+            <>
+              <div className="versus-answer" aria-live="assertive">
+                <span>The answer is</span>
+                <strong>{formatVersusPokemonName(round.answer)}</strong>
+                <small>Shown for 15 seconds before the next round.</small>
+              </div>
+              <button
+                className="versus-skip-wait"
+                onClick={() => socketRef.current?.send(JSON.stringify({ type: "host:skip-reveal" }))}
+                type="button"
+              >
+                Skip wait
+              </button>
+            </>
           ) : null}
           {role === "player" && round?.status === "active" ? (
             <form className="versus-guess" onSubmit={(event) => { event.preventDefault(); submitGuess(); }}>
