@@ -51,6 +51,7 @@ after this code is deployed:
 1. Create a **Custom Receiver** in the
    [Google Cast SDK Developer Console](https://cast.google.com/publish/).
 2. Use `https://pokedex.flawed.tech/cast` as its receiver URL.
+3. Upload `public/cast-app-icon-512.png` as the 512×512 application icon.
 
 No environment variable, frontend rebuild, or additional code change is
 required. The Node server exposes the ID through `/api/cast-config`.
