@@ -3,28 +3,128 @@ import { createServer } from "node:http";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
-import { calculatePoints, createRoomCode, normalizeGuess } from "./game.mjs";
+import {
+  calculatePoints,
+  createRoomCode,
+  DEFAULT_REVEAL_DURATION_MS,
+  DEFAULT_ROUND_DURATION_MS,
+  normalizeGuess,
+} from "./game.mjs";
 
 const port = Number(process.env.PORT || 8080);
 const distDir = fileURLToPath(new URL("../dist/", import.meta.url));
 const rooms = new Map();
+const roundDurationMs = Number(process.env.VERSUS_ROUND_MS) || DEFAULT_ROUND_DURATION_MS;
+const revealDurationMs = Number(process.env.VERSUS_REVEAL_MS) || DEFAULT_REVEAL_DURATION_MS;
 
 const send = (socket, message) => {
-  if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(message));
+  if (socket.readyState === socket.OPEN) socket.send(JSON.stringify({ ...message, serverNow: Date.now() }));
 };
 const broadcast = (room, message) => {
   send(room.host, message);
   room.players.forEach((player) => send(player.socket, message));
 };
+const publicRound = (round) => round ? ({
+  number: round.number,
+  startedAt: round.startedAt,
+  endsAt: round.endsAt,
+  status: round.status,
+  spriteUrl: round.spriteUrl,
+  typeNames: round.typeNames,
+  revealedAt: round.revealedAt ?? null,
+  revealUntil: round.revealUntil ?? null,
+  answer: round.status === "revealed" ? round.pokemonName : null,
+}) : null;
 const snapshot = (room) => ({
   type: "room:state",
   code: room.code,
-  round: room.round ? { number: room.round.number, startedAt: room.round.startedAt, status: room.round.status } : null,
+  round: publicRound(room.round),
   players: [...room.players.values()].map(({ id, name, score }) => ({ id, name, score })).sort((a, b) => b.score - a.score),
 });
 const closeRoom = (room) => {
+  clearTimeout(room.roundTimer);
   broadcast(room, { type: "room:closed" });
   rooms.delete(room.code);
+};
+
+const loadRoundPokemon = async () => {
+  const forcedPokemonId = Number(process.env.VERSUS_POKEMON_ID);
+  const pokemonId = Number.isInteger(forcedPokemonId) && forcedPokemonId > 0
+    ? forcedPokemonId
+    : 1 + Math.floor(Math.random() * 251);
+  const response = await fetch(`https://pokeapi.co/api/v2/pokemon/${pokemonId}`);
+  if (!response.ok) throw new Error("Could not load Pokemon.");
+  return response.json();
+};
+
+const startRound = async (room, { afterReveal = false } = {}) => {
+  if (
+    !rooms.has(room.code) ||
+    room.players.size === 0 ||
+    room.isStarting ||
+    room.round?.status === "active" ||
+    (room.round?.status === "revealed" && !afterReveal)
+  ) return;
+  room.isStarting = true;
+  try {
+    const pokemon = await loadRoundPokemon();
+    if (!rooms.has(room.code) || room.players.size === 0) return;
+    clearTimeout(room.roundTimer);
+    const startedAt = Date.now();
+    room.roundNumber += 1;
+    room.round = {
+      number: room.roundNumber,
+      pokemonId: pokemon.id,
+      pokemonName: pokemon.name,
+      spriteUrl: pokemon.sprites.front_default,
+      typeNames: pokemon.types.map(({ type }) => type.name),
+      startedAt,
+      endsAt: startedAt + roundDurationMs,
+      status: "active",
+      correctCount: 0,
+    };
+    room.players.forEach((player) => { player.answeredRound = 0; });
+    broadcast(room, {
+      type: "round:started",
+      ...publicRound(room.round),
+      cryUrl: pokemon.cries?.latest || pokemon.cries?.legacy || null,
+    });
+    broadcast(room, snapshot(room));
+    room.roundTimer = setTimeout(() => revealRound(room), roundDurationMs);
+  } catch {
+    send(room.host, { type: "error", message: "Could not start round." });
+    room.round = null;
+    broadcast(room, snapshot(room));
+  } finally {
+    room.isStarting = false;
+  }
+};
+
+const revealRound = (room) => {
+  if (room.round?.status !== "active") return;
+  clearTimeout(room.roundTimer);
+  const revealedAt = Date.now();
+  room.round.status = "revealed";
+  room.round.revealedAt = revealedAt;
+  room.round.revealUntil = revealedAt + revealDurationMs;
+  broadcast(room, { type: "round:revealed", ...publicRound(room.round) });
+  broadcast(room, snapshot(room));
+  room.roundTimer = setTimeout(() => {
+    if (!rooms.has(room.code)) return;
+    if (room.players.size === 0) {
+      room.round = null;
+      broadcast(room, snapshot(room));
+      return;
+    }
+    void startRound(room, { afterReveal: true });
+  }, revealDurationMs);
+};
+
+const revealIfEveryoneAnswered = (room) => {
+  if (room.round?.status !== "active" || room.players.size === 0) return;
+  const everyoneAnswered = [...room.players.values()]
+    .every((player) => player.answeredRound === room.round.number);
+  if (everyoneAnswered) revealRound(room);
 };
 
 const server = createServer((request, response) => {
@@ -49,7 +149,7 @@ webSockets.on("connection", (socket) => {
     try { message = JSON.parse(raw.toString()); } catch { return send(socket, { type: "error", message: "Invalid message." }); }
     if (message.type === "host:create") {
       const code = createRoomCode(rooms);
-      const room = { code, host: socket, players: new Map(), round: null, roundNumber: 0 };
+      const room = { code, host: socket, players: new Map(), round: null, roundNumber: 0, roundTimer: null, isStarting: false };
       rooms.set(code, room);
       socket.roomCode = code;
       socket.role = "host";
@@ -72,38 +172,23 @@ webSockets.on("connection", (socket) => {
     const room = rooms.get(socket.roomCode);
     if (!room) return send(socket, { type: "error", message: "Match not found." });
     if (message.type === "host:start" && socket.role === "host") {
-      const forcedPokemonId = Number(process.env.VERSUS_POKEMON_ID);
-      const pokemonId = Number.isInteger(forcedPokemonId) && forcedPokemonId > 0
-        ? forcedPokemonId
-        : 1 + Math.floor(Math.random() * 251);
-      const pokemonResponse = await fetch(`https://pokeapi.co/api/v2/pokemon/${pokemonId}`);
-      if (!pokemonResponse.ok) return send(socket, { type: "error", message: "Could not start round." });
-      const pokemon = await pokemonResponse.json();
-      room.roundNumber += 1;
-      room.round = { number: room.roundNumber, pokemonId, pokemonName: pokemon.name, startedAt: Date.now(), status: "active", correctCount: 0 };
-      room.players.forEach((player) => { player.answeredRound = 0; });
-      broadcast(room, {
-        type: "round:started",
-        number: room.round.number,
-        startedAt: room.round.startedAt,
-        spriteUrl: pokemon.sprites.front_default,
-        cryUrl: pokemon.cries?.latest || pokemon.cries?.legacy || null,
-        typeNames: pokemon.types.map(({ type }) => type.name),
-      });
-      return broadcast(room, snapshot(room));
+      return void startRound(room);
     }
     if (message.type === "player:guess" && socket.role === "player" && room.round?.status === "active") {
       const player = room.players.get(socket.playerId);
       if (!player || player.answeredRound === room.round.number) return;
       const correct = normalizeGuess(message.guess) === normalizeGuess(room.round.pokemonName);
-      if (!correct) return send(socket, { type: "guess:result", correct: false });
       player.answeredRound = room.round.number;
-      room.round.correctCount += 1;
-      const points = calculatePoints(room.round.correctCount, Date.now() - room.round.startedAt);
-      player.score += points;
-      send(socket, { type: "guess:result", correct: true, points });
-      broadcast(room, { type: "round:answer", playerId: player.id, name: player.name, points });
-      return broadcast(room, snapshot(room));
+      let points = 0;
+      if (correct) {
+        room.round.correctCount += 1;
+        points = calculatePoints(room.round.correctCount, Date.now() - room.round.startedAt);
+        player.score += points;
+        broadcast(room, { type: "round:answer", playerId: player.id, name: player.name, points });
+      }
+      send(socket, { type: "guess:result", correct, points });
+      broadcast(room, snapshot(room));
+      return revealIfEveryoneAnswered(room);
     }
   });
   socket.on("close", () => {
@@ -112,6 +197,7 @@ webSockets.on("connection", (socket) => {
     if (socket.role === "host") return closeRoom(room);
     if (socket.playerId) room.players.delete(socket.playerId);
     broadcast(room, snapshot(room));
+    revealIfEveryoneAnswered(room);
   });
 });
 

@@ -5971,6 +5971,7 @@ function App() {
   const [versusRoundVisual, setVersusRoundVisual] = useState<{
     spriteUrl: string;
     typeNames: string[];
+    concealed: boolean;
   } | null>(null);
   const [query, setQuery] = useState(INITIAL_QUERY);
   const [initialGamePokemonId] = useState<number | null>(null);
@@ -6605,7 +6606,7 @@ function App() {
   const sceneAnimatedSpriteUrl = mode === "versus" ? null : animatedSpriteUrl;
   const isScenePokemonConcealed =
     isCurrentGamePokemonConcealed ||
-    (mode === "versus" && versusRoundVisual !== null);
+    (mode === "versus" && versusRoundVisual?.concealed === true);
   const confettiPalette =
     CONFETTI_TYPE_PALETTES[typeNames[0] ?? "normal"] ?? CONFETTI_TYPE_PALETTES.normal;
   const habitat =

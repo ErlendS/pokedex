@@ -1,4 +1,6 @@
 export const ROOM_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+export const DEFAULT_ROUND_DURATION_MS = 30_000;
+export const DEFAULT_REVEAL_DURATION_MS = 15_000;
 
 export function createRoomCode(existingCodes, random = Math.random) {
   let code;

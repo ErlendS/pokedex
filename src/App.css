@@ -1244,6 +1244,65 @@
   background: #c8263e;
   box-shadow: 0 0 0 5px rgba(200, 38, 62, 0.12);
 }
+.versus-countdown {
+  display: grid;
+  gap: 7px;
+}
+.versus-countdown-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  color: #66736f;
+  font-size: 12px;
+  font-weight: 700;
+}
+.versus-countdown-label strong {
+  color: #14201d;
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+}
+.versus-progress {
+  height: 12px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(28, 42, 38, 0.1);
+  box-shadow: inset 0 1px 2px rgba(28, 42, 38, 0.12);
+}
+.versus-progress > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #258b69, #59b990);
+  transition: width 100ms linear, background 180ms ease;
+}
+.versus-countdown.is-urgent .versus-progress > span {
+  background: linear-gradient(90deg, #c8263e, #ed6a7d);
+}
+.versus-countdown.is-revealed .versus-progress > span {
+  background: linear-gradient(90deg, #d69a16, #ffcb3f);
+}
+.versus-answer {
+  display: grid;
+  gap: 2px;
+  padding: 14px;
+  border: 1px solid rgba(214, 154, 22, 0.42);
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(255, 241, 188, 0.82), rgba(255, 255, 255, 0.92));
+  animation: versus-answer-in 260ms ease-out both;
+}
+.versus-answer > span,
+.versus-answer small { color: #776224; }
+.versus-answer > span { font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; }
+.versus-answer strong { font-size: 25px; }
+.versus-answer small { margin-top: 3px; line-height: 1.35; }
+.versus-guess input:disabled {
+  color: #66736f;
+  background: #eef2f0;
+}
+@keyframes versus-answer-in {
+  from { opacity: 0; transform: translateY(6px) scale(.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
 .versus-guess { display: grid; grid-template-columns: 1fr auto; gap: .65rem; }
 .versus-scoreboard { display: grid; gap: .5rem; padding: 0; list-style: none; }
 .versus-scoreboard li { display: flex; justify-content: space-between; padding: .7rem .8rem; border-radius: 6px; background: rgba(28, 42, 38, 0.06); }

@@ -2,23 +2,38 @@ import QRCode from "qrcode";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type Player = { id: string; name: string; score: number };
-type Round = { number: number; startedAt: number; status: string };
+type Round = {
+  number: number;
+  startedAt: number;
+  endsAt: number;
+  status: "active" | "revealed";
+  spriteUrl: string | null;
+  typeNames: string[];
+  revealedAt: number | null;
+  revealUntil: number | null;
+  answer: string | null;
+};
 type ServerMessage =
   | { type: "host:created"; code: string }
   | { type: "player:joined"; code: string; playerId: string }
   | { type: "room:state"; code: string; players: Player[]; round: Round | null }
-  | { type: "round:started"; number: number; startedAt: number; spriteUrl: string | null; cryUrl: string | null; typeNames: string[] }
+  | ({ type: "round:started"; cryUrl: string | null } & Round)
+  | ({ type: "round:revealed" } & Round)
   | { type: "round:answer"; playerId: string; name: string; points: number }
   | { type: "guess:result"; correct: boolean; points?: number }
   | { type: "room:closed" }
   | { type: "error"; message: string };
 
 const websocketUrl = () => `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/versus`;
+const formatPokemonName = (value: string | null) =>
+  value
+    ? value.split("-").map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`).join(" ")
+    : "Ukjent Pokémon";
 
 export function VersusMode({
   onRoundVisualChange,
 }: {
-  onRoundVisualChange: (visual: { spriteUrl: string; typeNames: string[] } | null) => void;
+  onRoundVisualChange: (visual: { spriteUrl: string; typeNames: string[]; concealed: boolean } | null) => void;
 }) {
   const initialCode = useMemo(() => new URLSearchParams(window.location.search).get("versus")?.toUpperCase() ?? "", []);
   const [role, setRole] = useState<"choose" | "host" | "player">(initialCode ? "player" : "choose");
@@ -26,11 +41,13 @@ export function VersusMode({
   const [name, setName] = useState("");
   const [players, setPlayers] = useState<Player[]>([]);
   const [round, setRound] = useState<Round | null>(null);
-  const [spriteUrl, setSpriteUrl] = useState<string | null>(null);
   const [guess, setGuess] = useState("");
   const [feedback, setFeedback] = useState("");
   const [qrUrl, setQrUrl] = useState("");
   const [connected, setConnected] = useState(false);
+  const [clockNow, setClockNow] = useState(Date.now);
+  const [serverOffsetMs, setServerOffsetMs] = useState(0);
+  const [answeredRoundNumber, setAnsweredRoundNumber] = useState<number | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
 
   const connect = useCallback((nextRole: "host" | "player", joinCode = code, playerName = name) => {
@@ -43,23 +60,49 @@ export function VersusMode({
     });
     socket.addEventListener("close", () => setConnected(false));
     socket.addEventListener("message", (event) => {
-      const message = JSON.parse(event.data) as ServerMessage;
+      const message = JSON.parse(event.data) as ServerMessage & { serverNow: number };
+      setServerOffsetMs(message.serverNow - Date.now());
       if (message.type === "host:created" || message.type === "player:joined") setCode(message.code);
-      if (message.type === "room:state") { setPlayers(message.players); setRound(message.round); }
+      if (message.type === "room:state") {
+        setPlayers(message.players);
+        setRound(message.round);
+        if (message.round?.spriteUrl) {
+          onRoundVisualChange({
+            spriteUrl: message.round.spriteUrl,
+            typeNames: message.round.typeNames,
+            concealed: message.round.status === "active",
+          });
+        } else if (!message.round) {
+          onRoundVisualChange(null);
+        }
+      }
       if (message.type === "round:started") {
-        setRound({ number: message.number, startedAt: message.startedAt, status: "active" });
-        setSpriteUrl(message.spriteUrl);
+        setRound(message);
         setGuess("");
+        setAnsweredRoundNumber(null);
         setFeedback("Ny Pokémon — gjett raskest!");
         onRoundVisualChange(
           message.spriteUrl
-            ? { spriteUrl: message.spriteUrl, typeNames: message.typeNames }
+            ? { spriteUrl: message.spriteUrl, typeNames: message.typeNames, concealed: true }
             : null,
         );
         if (message.cryUrl) void new Audio(message.cryUrl).play().catch(() => undefined);
       }
+      if (message.type === "round:revealed") {
+        setRound(message);
+        setFeedback(`Svaret er ${formatPokemonName(message.answer)}.`);
+        if (message.spriteUrl) {
+          onRoundVisualChange({
+            spriteUrl: message.spriteUrl,
+            typeNames: message.typeNames,
+            concealed: false,
+          });
+        }
+      }
       if (message.type === "round:answer") setFeedback(`${message.name} var raskest: +${message.points}`);
-      if (message.type === "guess:result") setFeedback(message.correct ? `Riktig! +${message.points ?? 0} poeng` : "Ikke riktig — prøv igjen!");
+      if (message.type === "guess:result") {
+        setFeedback(message.correct ? `Riktig! +${message.points ?? 0} poeng` : "Svar registrert — venter på de andre.");
+      }
       if (message.type === "room:closed") {
         setFeedback("Verten avsluttet kampen.");
         onRoundVisualChange(null);
@@ -67,6 +110,12 @@ export function VersusMode({
       if (message.type === "error") setFeedback(message.message);
     });
   }, [code, name, onRoundVisualChange]);
+
+  useEffect(() => {
+    if (!round) return;
+    const timer = window.setInterval(() => setClockNow(Date.now() + serverOffsetMs), 100);
+    return () => window.clearInterval(timer);
+  }, [round, serverOffsetMs]);
 
   useEffect(() => () => {
     socketRef.current?.close();
@@ -83,6 +132,18 @@ export function VersusMode({
     if (!code.trim() || !name.trim()) return setFeedback("Skriv inn navn og kode.");
     setRole("player");
     connect("player", code.trim().toUpperCase(), name.trim());
+  };
+  const deadline = round?.status === "active" ? round.endsAt : round?.revealUntil;
+  const phaseStartedAt = round?.status === "active" ? round.startedAt : round?.revealedAt;
+  const phaseDuration = deadline && phaseStartedAt ? deadline - phaseStartedAt : 0;
+  const remainingMs = deadline ? Math.max(0, deadline - clockNow) : 0;
+  const remainingSeconds = Math.ceil(remainingMs / 1000);
+  const remainingPercent = phaseDuration > 0 ? Math.max(0, Math.min(100, (remainingMs / phaseDuration) * 100)) : 0;
+  const hasAnsweredCurrentRound = answeredRoundNumber === round?.number;
+  const submitGuess = () => {
+    if (!round || hasAnsweredCurrentRound || !guess.trim()) return;
+    setAnsweredRoundNumber(round.number);
+    socketRef.current?.send(JSON.stringify({ type: "player:guess", guess }));
   };
 
   return (
@@ -117,19 +178,50 @@ export function VersusMode({
               </div>
             ) : null}
           </div>
-          <button className="versus-primary" disabled={!connected || players.length === 0} onClick={() => socketRef.current?.send(JSON.stringify({ type: "host:start" }))} type="button">{round ? "Neste Pokémon" : "Start runden"}</button>
+          <button className="versus-primary" disabled={!connected || players.length === 0 || round !== null} onClick={() => socketRef.current?.send(JSON.stringify({ type: "host:start" }))} type="button">
+            {round?.status === "active" ? "Runden pågår" : round?.status === "revealed" ? `Neste runde om ${remainingSeconds}s` : "Start runden"}
+          </button>
         </section>
       ) : null}
       {(role === "host" || connected) ? (
         <section className="versus-arena">
           <div className="versus-round-indicator">
-            <span aria-hidden="true" className={spriteUrl ? "is-live" : ""} />
-            {spriteUrl ? `Runde ${round?.number ?? 1} pågår i 3D-scenen` : "Venter på neste Pokémon"}
+            <span aria-hidden="true" className={round?.status === "active" ? "is-live" : ""} />
+            {round?.status === "active" ? `Runde ${round.number} pågår i 3D-scenen` : round?.status === "revealed" ? `Runde ${round.number} — fasit` : "Venter på neste Pokémon"}
           </div>
+          {round && deadline ? (
+            <div
+              className={`versus-countdown is-${round.status}${round.status === "active" && remainingPercent <= 20 ? " is-urgent" : ""}`}
+              data-deadline={deadline}
+              data-started-at={phaseStartedAt ?? undefined}
+            >
+              <div className="versus-countdown-label">
+                <span>{round.status === "active" ? "Tid igjen" : "Neste runde"}</span>
+                <strong>{remainingSeconds}s</strong>
+              </div>
+              <div
+                aria-label={round.status === "active" ? "Tid igjen i runden" : "Tid til neste runde"}
+                aria-valuemax={100}
+                aria-valuemin={0}
+                aria-valuenow={Math.round(remainingPercent)}
+                className="versus-progress"
+                role="progressbar"
+              >
+                <span style={{ width: `${remainingPercent}%` }} />
+              </div>
+            </div>
+          ) : null}
+          {round?.status === "revealed" && round.answer ? (
+            <div className="versus-answer" aria-live="assertive">
+              <span>Fasiten er</span>
+              <strong>{formatPokemonName(round.answer)}</strong>
+              <small>Vises i 15 sekunder før neste runde.</small>
+            </div>
+          ) : null}
           {role === "player" && round?.status === "active" ? (
-            <form className="versus-guess" onSubmit={(event) => { event.preventDefault(); socketRef.current?.send(JSON.stringify({ type: "player:guess", guess })); }}>
-              <input aria-label="Ditt Pokémon-svar" autoComplete="off" autoFocus onChange={(event) => setGuess(event.target.value)} placeholder="Hvem er Pokémonen?" value={guess} />
-              <button className="versus-primary" type="submit">Gjett</button>
+            <form className="versus-guess" onSubmit={(event) => { event.preventDefault(); submitGuess(); }}>
+              <input aria-label="Ditt Pokémon-svar" autoComplete="off" autoFocus disabled={hasAnsweredCurrentRound} onChange={(event) => setGuess(event.target.value)} placeholder="Hvem er Pokémonen?" value={guess} />
+              <button className="versus-primary" disabled={hasAnsweredCurrentRound || !guess.trim()} type="submit">{hasAnsweredCurrentRound ? "Svart" : "Gjett"}</button>
             </form>
           ) : null}
           <p aria-live="polite">{feedback}</p>
