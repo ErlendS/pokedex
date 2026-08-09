@@ -176,7 +176,7 @@ export function VersusMode({
           </button>
           <button
             className="versus-cast-button"
-            disabled={["loading", "unconfigured", "unavailable", "connecting"].includes(castStatus)}
+            disabled={["loading", "unconfigured", "unavailable", "connecting", "error"].includes(castStatus)}
             onClick={() => void castRoom()}
             type="button"
           >
@@ -187,6 +187,8 @@ export function VersusMode({
                 ? "Connecting to TV…"
                 : castStatus === "unconfigured"
                   ? "Cast setup pending"
+                  : castStatus === "unavailable" || castStatus === "error"
+                    ? "Cast unavailable"
                   : "Cast to TV"}
           </button>
           {castError ? <p className="status error">{castError}</p> : null}

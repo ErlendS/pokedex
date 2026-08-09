@@ -16,7 +16,7 @@ const distDir = fileURLToPath(new URL("../dist/", import.meta.url));
 const rooms = new Map();
 const roundDurationMs = Number(process.env.VERSUS_ROUND_MS) || DEFAULT_ROUND_DURATION_MS;
 const revealDurationMs = Number(process.env.VERSUS_REVEAL_MS) || DEFAULT_REVEAL_DURATION_MS;
-const castAppId = String(process.env.CAST_APP_ID || "").trim();
+const castAppId = "9DF86F21";
 const castNamespace = "urn:x-cast:tech.flawed.pokedex.versus";
 
 const send = (socket, message) => {

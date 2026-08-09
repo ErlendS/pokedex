@@ -45,19 +45,15 @@ Cast receiver joins the same room as a display-only client, renders the shared
 Three.js scene, join QR code, timer, answer reveal, and scoreboard. Other phones
 continue to join through the normal QR link.
 
-To enable the **Cast to TV** button after this code is deployed:
+The sender is configured with Cast application ID `9DF86F21`. To enable it
+after this code is deployed:
 
 1. Create a **Custom Receiver** in the
    [Google Cast SDK Developer Console](https://cast.google.com/publish/).
 2. Use `https://pokedex.flawed.tech/cast` as its receiver URL.
-3. Copy the generated application ID into the Fly runtime:
 
-   ```sh
-   fly secrets set CAST_APP_ID=YOUR_APPLICATION_ID
-   ```
-
-No frontend rebuild or code change is required. The Node server exposes the ID
-through `/api/cast-config`, and the sender SDK is loaded only when an ID exists.
+No environment variable, frontend rebuild, or additional code change is
+required. The Node server exposes the ID through `/api/cast-config`.
 The sender and receiver communicate on
 `urn:x-cast:tech.flawed.pokedex.versus`; gameplay state continues to travel
 through the existing `/versus` WebSocket connection.

@@ -21,7 +21,9 @@ test("hosts a versus match, joins from a second device, and awards points", asyn
   await expect(page.getByAltText(/QR code for match/)).toBeVisible();
   await expect(page.locator(".versus-qr-mark")).toBeVisible();
   await expect(page.getByText("Ash")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Cast setup pending" })).toBeDisabled();
+  const castConfigResponse = await page.request.get("/api/cast-config");
+  expect(await castConfigResponse.json()).toMatchObject({ appId: "9DF86F21", receiverPath: "/cast" });
+  await expect(page.getByRole("button", { name: /Cast to TV|Cast unavailable/ })).toBeVisible();
 
   const displayContext = await browser.newContext();
   const display = await displayContext.newPage();
