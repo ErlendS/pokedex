@@ -9,12 +9,13 @@ import {
 
 type CastStatus = "loading" | "unconfigured" | "unavailable" | "ready" | "connecting" | "connected" | "error";
 
-export function useCastSender(roomCode: string) {
+export function useCastSender(roomCode: string, enabled = true) {
   const [config, setConfig] = useState<CastConfig | null>(null);
   const [status, setStatus] = useState<CastStatus>("loading");
   const [error, setError] = useState("");
 
   useEffect(() => {
+    if (!enabled) return;
     let cancelled = false;
     let unsubscribe: () => void = () => undefined;
     void fetchCastConfig()
@@ -49,7 +50,7 @@ export function useCastSender(roomCode: string) {
       cancelled = true;
       unsubscribe();
     };
-  }, []);
+  }, [enabled]);
 
   const castRoom = useCallback(async () => {
     if (!config || !roomCode) return;

@@ -9,6 +9,7 @@ import {
   DEFAULT_REVEAL_DURATION_MS,
   DEFAULT_ROUND_DURATION_MS,
   normalizeGuess,
+  serializeRound,
 } from "./game.mjs";
 
 const port = Number(process.env.PORT || 8080);
@@ -26,23 +27,22 @@ const broadcast = (room, message) => {
   const recipients = new Set([room.host, ...room.players.values().map((player) => player.socket), ...room.displays]);
   recipients.forEach((socket) => send(socket, message));
 };
-const publicRound = (round) => round ? ({
-  number: round.number,
-  startedAt: round.startedAt,
-  endsAt: round.endsAt,
-  status: round.status,
-  spriteUrl: round.spriteUrl,
-  typeNames: round.typeNames,
-  revealedAt: round.revealedAt ?? null,
-  revealUntil: round.revealUntil ?? null,
-  answer: round.status === "revealed" ? round.pokemonName : null,
-}) : null;
-const snapshot = (room) => ({
+const viewerSockets = (room) => new Set([room.host, ...room.displays]);
+const playerSockets = (room) => new Set([...room.players.values()].map((player) => player.socket));
+const snapshot = (room, options) => ({
   type: "room:state",
   code: room.code,
-  round: publicRound(room.round),
+  round: serializeRound(room.round, options),
   players: [...room.players.values()].map(({ id, name, score }) => ({ id, name, score })).sort((a, b) => b.score - a.score),
 });
+const broadcastState = (room) => {
+  viewerSockets(room).forEach((socket) => send(socket, snapshot(room)));
+  playerSockets(room).forEach((socket) => send(socket, snapshot(room, { controller: true })));
+};
+const broadcastRound = (room, type, viewerExtras = {}) => {
+  viewerSockets(room).forEach((socket) => send(socket, { type, ...serializeRound(room.round), ...viewerExtras }));
+  playerSockets(room).forEach((socket) => send(socket, { type, ...serializeRound(room.round, { controller: true }) }));
+};
 const closeRoom = (room) => {
   clearTimeout(room.roundTimer);
   broadcast(room, { type: "room:closed" });
@@ -90,17 +90,15 @@ const startRound = async (room, { afterReveal = false } = {}) => {
       correctCount: 0,
     };
     room.players.forEach((player) => { player.answeredRound = 0; });
-    broadcast(room, {
-      type: "round:started",
-      ...publicRound(room.round),
+    broadcastRound(room, "round:started", {
       cryUrl: pokemon.cries?.latest || pokemon.cries?.legacy || null,
     });
-    broadcast(room, snapshot(room));
+    broadcastState(room);
     room.roundTimer = setTimeout(() => revealRound(room), roundDurationMs);
   } catch {
     send(room.host, { type: "error", message: "Could not start round." });
     room.round = null;
-    broadcast(room, snapshot(room));
+    broadcastState(room);
   } finally {
     room.isStarting = false;
   }
@@ -113,13 +111,13 @@ const revealRound = (room) => {
   room.round.status = "revealed";
   room.round.revealedAt = revealedAt;
   room.round.revealUntil = revealedAt + revealDurationMs;
-  broadcast(room, { type: "round:revealed", ...publicRound(room.round) });
-  broadcast(room, snapshot(room));
+  broadcastRound(room, "round:revealed");
+  broadcastState(room);
   room.roundTimer = setTimeout(() => {
     if (!rooms.has(room.code)) return;
     if (room.players.size === 0) {
       room.round = null;
-      broadcast(room, snapshot(room));
+      broadcastState(room);
       return;
     }
     void startRound(room, { afterReveal: true });
@@ -167,14 +165,7 @@ webSockets.on("connection", (socket) => {
       rooms.set(code, room);
       socket.roomCode = code;
       socket.role = "host";
-      const name = String(message.name || "").trim().slice(0, 24);
-      let playerId = null;
-      if (name) {
-        playerId = crypto.randomUUID();
-        room.players.set(playerId, { id: playerId, name, score: 0, socket, answeredRound: 0 });
-        socket.playerId = playerId;
-      }
-      send(socket, { type: "host:created", code, playerId });
+      send(socket, { type: "host:created", code, playerId: null });
       return send(socket, snapshot(room));
     }
     if (message.type === "player:join") {
@@ -188,7 +179,7 @@ webSockets.on("connection", (socket) => {
       socket.playerId = id;
       socket.role = "player";
       send(socket, { type: "player:joined", code, playerId: id });
-      return broadcast(room, snapshot(room));
+      return broadcastState(room);
     }
     if (message.type === "display:join") {
       const code = String(message.code || "").toUpperCase();
@@ -218,7 +209,7 @@ webSockets.on("connection", (socket) => {
         broadcast(room, { type: "round:answer", playerId: player.id, name: player.name, points });
       }
       send(socket, { type: "guess:result", correct, points });
-      broadcast(room, snapshot(room));
+      broadcastState(room);
       return revealIfEveryoneAnswered(room);
     }
   });
@@ -228,7 +219,7 @@ webSockets.on("connection", (socket) => {
     if (socket.role === "host") room.host = null;
     if (socket.role === "display") room.displays.delete(socket);
     if (socket.playerId) room.players.delete(socket.playerId);
-    broadcast(room, snapshot(room));
+    broadcastState(room);
     revealIfEveryoneAnswered(room);
     closeRoomIfEmpty(room);
   });

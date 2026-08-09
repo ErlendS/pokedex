@@ -22,11 +22,12 @@ PORT=8080 pnpm start
 
 ## Versus Mode
 
-A host creates a room and displays a five-character join code and QR code.
+A display host creates a room and shows a five-character join code and QR code.
 Players scan the QR code (or enter the code), choose a name, and compete to
-identify the same Pokemon. Faster correct answers earn more points. Versus uses
-the same Three.js landscape and Pokedex model as the lookup and solo game modes;
-each synchronized round appears as a silhouette in the shared 3D scene.
+identify the same Pokemon. Faster correct answers earn more points. The host is
+not a player: it shows the shared Three.js scene, timer, answer, and scoreboard.
+Joined phones are lightweight controllers with only the join and guess inputs;
+the server withholds Pokemon artwork, type data, cries, and answers from them.
 
 Rooms and scores are held in server memory and remain active while a controller,
 Cast display, or player is connected. The current Fly deployment runs a single
@@ -40,10 +41,10 @@ Versus includes a complete Custom Web Receiver at:
 https://pokedex.flawed.tech/cast
 ```
 
-The phone that creates the room is both the match controller and a player. The
-Cast receiver joins the same room as a display-only client, renders the shared
-Three.js scene, join QR code, timer, answer reveal, and scoreboard. Other phones
-continue to join through the normal QR link.
+The computer that creates the room is a display-only host. The Cast receiver can
+join the same room as an additional display, rendering the shared Three.js
+scene, join QR code, timer, answer reveal, and scoreboard. Phones continue to
+join through the normal QR link and act only as guessing controllers.
 
 The sender is configured with Cast application ID `9DF86F21`. To enable it
 after this code is deployed:

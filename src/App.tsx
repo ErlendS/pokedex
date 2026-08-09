@@ -5971,6 +5971,9 @@ function App() {
     getSavedRecentGamePokemonIds,
   );
   const [mode, setMode] = useState<AppMode>(initialMode);
+  const [isVersusController, setIsVersusController] = useState(
+    initialMode === "versus" && new URLSearchParams(window.location.search).has("versus"),
+  );
   const [versusRoundVisual, setVersusRoundVisual] = useState<{
     spriteUrl: string;
     typeNames: string[];
@@ -6637,6 +6640,7 @@ function App() {
     setMode(nextMode);
 
     if (nextMode !== "versus") {
+      setIsVersusController(false);
       const url = new URL(window.location.href);
       if (url.searchParams.has("versus")) {
         url.searchParams.delete("versus");
@@ -7071,7 +7075,7 @@ function App() {
 
   return (
     <>
-      {isCastReceiver ? null : (
+      {isCastReceiver || isVersusController ? null : (
         <WhosThatPokemonIntro
           isMuted={isIntroMuted}
           onComplete={() => setIsIntroComplete(true)}
@@ -7096,7 +7100,7 @@ function App() {
         </div>
       ) : null}
       <main
-        className={`pokedex-app skin-${equippedSkin}${mode === "versus" ? " is-versus" : ""}${isCastReceiver ? " is-cast-receiver" : ""}${showShinyCelebration ? " is-shaking" : ""}`}
+        className={`pokedex-app skin-${equippedSkin}${mode === "versus" ? " is-versus" : ""}${isVersusController ? " is-versus-controller" : ""}${isCastReceiver ? " is-cast-receiver" : ""}${showShinyCelebration ? " is-shaking" : ""}`}
         style={
           {
             "--skin-hue": equippedSkinDefinition.hue,
@@ -7105,10 +7109,11 @@ function App() {
           } as CSSProperties
         }
       >
-        <section
-          className="viewer-shell"
-          aria-label="Interactive Pokedex model"
-        >
+        {isVersusController ? null : (
+          <section
+            className="viewer-shell"
+            aria-label="Interactive Pokedex model"
+          >
           <Canvas shadows camera={VIEWER_CAMERA}>
             <color
               attach="background"
@@ -7201,14 +7206,15 @@ function App() {
               target={VIEWER_ORBIT_TARGET}
             />
           </Canvas>
-        </section>
+          </section>
+        )}
 
-        <section className="control-panel" aria-label={isCastReceiver ? "Versus Cast display" : "Pokedex controls"}>
+        <section className="control-panel" aria-label={isCastReceiver ? "Versus Cast display" : isVersusController ? "Versus phone controller" : "Pokedex controls"}>
           {isCastReceiver ? (
             <CastReceiverMode onRoundVisualChange={setVersusRoundVisual} />
           ) : (
             <>
-          <div className="mode-switch" aria-label="Pokedex mode">
+          {isVersusController ? null : <div className="mode-switch" aria-label="Pokedex mode">
             <button
               aria-pressed={mode === "lookup"}
               onClick={() => switchMode("lookup")}
@@ -7230,10 +7236,13 @@ function App() {
             >
               Versus
             </button>
-          </div>
+          </div>}
 
           {mode === "versus" ? (
-            <VersusMode onRoundVisualChange={setVersusRoundVisual} />
+            <VersusMode
+              onControllerModeChange={setIsVersusController}
+              onRoundVisualChange={setVersusRoundVisual}
+            />
           ) : (
             <>
 

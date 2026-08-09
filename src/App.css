@@ -1333,6 +1333,38 @@
 .versus-scoreboard { display: grid; gap: .5rem; padding: 0; list-style: none; }
 .versus-scoreboard li { display: flex; justify-content: space-between; padding: .7rem .8rem; border-radius: 6px; background: rgba(28, 42, 38, 0.06); }
 
+.pokedex-app.is-versus-controller {
+  display: grid;
+  min-height: 100svh;
+  grid-template-columns: minmax(0, 520px);
+  place-content: center;
+  padding: 20px;
+  background:
+    radial-gradient(circle at 15% 10%, rgba(200, 38, 62, 0.16), transparent 34%),
+    radial-gradient(circle at 85% 90%, rgba(37, 139, 105, 0.18), transparent 36%),
+    #eef4f0;
+  box-sizing: border-box;
+}
+.pokedex-app.is-versus-controller .control-panel {
+  min-height: 0;
+  padding: clamp(20px, 5vw, 34px);
+  border: 1px solid rgba(28, 42, 38, 0.12);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 24px 70px rgba(20, 32, 29, 0.14);
+}
+.pokedex-app.is-versus-controller .versus-panel {
+  width: 100%;
+}
+.pokedex-app.is-versus-controller .versus-arena {
+  padding: 18px;
+  background: rgba(242, 247, 244, 0.9);
+}
+.pokedex-app.is-versus-controller .versus-guess input,
+.pokedex-app.is-versus-controller .versus-guess button {
+  min-height: 54px;
+}
+
 .pokedex-app.is-cast-receiver {
   grid-template-columns: minmax(0, 1fr) minmax(380px, 29vw);
   background: #0c1512;
@@ -1421,6 +1453,19 @@
 }
 
 @media (max-width: 560px) {
+  .pokedex-app.is-versus-controller {
+    min-height: 100dvh;
+    padding: 0;
+    place-content: stretch;
+  }
+  .pokedex-app.is-versus-controller .control-panel {
+    min-height: 100dvh;
+    padding: 24px 18px;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    box-sizing: border-box;
+  }
   .versus-choice { grid-template-columns: 1fr; }
   .versus-guess { grid-template-columns: 1fr; }
 }

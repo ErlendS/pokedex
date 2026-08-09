@@ -5,6 +5,7 @@ import {
   DEFAULT_REVEAL_DURATION_MS,
   DEFAULT_ROUND_DURATION_MS,
   normalizeGuess,
+  serializeRound,
 } from "./game.mjs";
 
 describe("versus game rules", () => {
@@ -24,5 +25,31 @@ describe("versus game rules", () => {
   it("uses a 30 second round and a 15 second answer reveal", () => {
     expect(DEFAULT_ROUND_DURATION_MS).toBe(30_000);
     expect(DEFAULT_REVEAL_DURATION_MS).toBe(15_000);
+  });
+
+  it("withholds Pokémon visuals and answers from phone controllers", () => {
+    const round = {
+      number: 2,
+      startedAt: 1_000,
+      endsAt: 31_000,
+      status: "revealed",
+      spriteUrl: "https://example.test/pikachu.png",
+      typeNames: ["electric"],
+      revealedAt: 31_000,
+      revealUntil: 46_000,
+      pokemonName: "pikachu",
+    };
+
+    expect(serializeRound(round)).toMatchObject({
+      spriteUrl: round.spriteUrl,
+      typeNames: ["electric"],
+      answer: "pikachu",
+    });
+    expect(serializeRound(round, { controller: true })).toMatchObject({
+      number: 2,
+      spriteUrl: null,
+      typeNames: [],
+      answer: null,
+    });
   });
 });

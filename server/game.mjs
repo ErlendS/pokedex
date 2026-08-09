@@ -16,3 +16,18 @@ export function normalizeGuess(value) {
 export function calculatePoints(correctPosition, elapsedMilliseconds) {
   return Math.max(20, 110 - correctPosition * 15 - Math.floor(elapsedMilliseconds / 1000) * 2);
 }
+
+export function serializeRound(round, { controller = false } = {}) {
+  if (!round) return null;
+  return {
+    number: round.number,
+    startedAt: round.startedAt,
+    endsAt: round.endsAt,
+    status: round.status,
+    spriteUrl: controller ? null : round.spriteUrl,
+    typeNames: controller ? [] : round.typeNames,
+    revealedAt: round.revealedAt ?? null,
+    revealUntil: round.revealUntil ?? null,
+    answer: !controller && round.status === "revealed" ? round.pokemonName : null,
+  };
+}
