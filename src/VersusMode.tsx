@@ -28,7 +28,7 @@ const websocketUrl = () => `${window.location.protocol === "https:" ? "wss" : "w
 const formatPokemonName = (value: string | null) =>
   value
     ? value.split("-").map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`).join(" ")
-    : "Ukjent Pokémon";
+    : "Unknown Pokémon";
 
 export function VersusMode({
   onRoundVisualChange,
@@ -80,7 +80,7 @@ export function VersusMode({
         setRound(message);
         setGuess("");
         setAnsweredRoundNumber(null);
-        setFeedback("Ny Pokémon — gjett raskest!");
+        setFeedback("New Pokémon — be the fastest to guess!");
         onRoundVisualChange(
           message.spriteUrl
             ? { spriteUrl: message.spriteUrl, typeNames: message.typeNames, concealed: true }
@@ -90,7 +90,7 @@ export function VersusMode({
       }
       if (message.type === "round:revealed") {
         setRound(message);
-        setFeedback(`Svaret er ${formatPokemonName(message.answer)}.`);
+        setFeedback(`The answer is ${formatPokemonName(message.answer)}.`);
         if (message.spriteUrl) {
           onRoundVisualChange({
             spriteUrl: message.spriteUrl,
@@ -99,12 +99,12 @@ export function VersusMode({
           });
         }
       }
-      if (message.type === "round:answer") setFeedback(`${message.name} var raskest: +${message.points}`);
+      if (message.type === "round:answer") setFeedback(`${message.name} was fastest: +${message.points}`);
       if (message.type === "guess:result") {
-        setFeedback(message.correct ? `Riktig! +${message.points ?? 0} poeng` : "Svar registrert — venter på de andre.");
+        setFeedback(message.correct ? `Correct! +${message.points ?? 0} points` : "Answer submitted — waiting for the other players.");
       }
       if (message.type === "room:closed") {
-        setFeedback("Verten avsluttet kampen.");
+        setFeedback("The host ended the match.");
         onRoundVisualChange(null);
       }
       if (message.type === "error") setFeedback(message.message);
@@ -129,7 +129,7 @@ export function VersusMode({
 
   const startHosting = () => { setRole("host"); connect("host"); };
   const join = () => {
-    if (!code.trim() || !name.trim()) return setFeedback("Skriv inn navn og kode.");
+    if (!code.trim() || !name.trim()) return setFeedback("Enter your name and join code.");
     setRole("player");
     connect("player", code.trim().toUpperCase(), name.trim());
   };
@@ -151,35 +151,35 @@ export function VersusMode({
       <header className="versus-header">
         <p className="eyebrow">Live multiplayer</p>
         <h1>Versus Mode</h1>
-        <p>Samme Pokémon. Samme øyeblikk. Raskeste riktige svar vinner.</p>
+        <p>Same Pokémon. Same moment. Fastest correct answer wins.</p>
       </header>
       {role === "choose" ? (
         <section className="versus-choice">
-          <button className="versus-primary" onClick={startHosting} type="button">Start en match</button>
-          <button onClick={() => setRole("player")} type="button">Bli med</button>
+          <button className="versus-primary" onClick={startHosting} type="button">Start a match</button>
+          <button onClick={() => setRole("player")} type="button">Join</button>
         </section>
       ) : null}
       {role === "player" && !connected ? (
         <form className="versus-join" onSubmit={(event) => { event.preventDefault(); join(); }}>
-          <label>Navn<input autoComplete="nickname" maxLength={24} onChange={(event) => setName(event.target.value)} value={name} /></label>
-          <label>Join-kode<input autoCapitalize="characters" maxLength={5} onChange={(event) => setCode(event.target.value.toUpperCase())} value={code} /></label>
-          <button className="versus-primary" type="submit">Bli med i kampen</button>
+          <label>Name<input autoComplete="nickname" maxLength={24} onChange={(event) => setName(event.target.value)} value={name} /></label>
+          <label>Join code<input autoCapitalize="characters" maxLength={5} onChange={(event) => setCode(event.target.value.toUpperCase())} value={code} /></label>
+          <button className="versus-primary" type="submit">Join match</button>
         </form>
       ) : null}
       {role === "host" && code ? (
         <section className="versus-host">
           <div className="versus-code">
-            <span>Join-kode</span>
+            <span>Join code</span>
             <strong>{code}</strong>
             {qrUrl ? (
               <div className="versus-qr">
-                <img alt={`QR-kode for match ${code}`} src={qrUrl} />
+                <img alt={`QR code for match ${code}`} src={qrUrl} />
                 <span aria-hidden="true" className="versus-qr-mark" />
               </div>
             ) : null}
           </div>
           <button className="versus-primary" disabled={!connected || players.length === 0 || round !== null} onClick={() => socketRef.current?.send(JSON.stringify({ type: "host:start" }))} type="button">
-            {round?.status === "active" ? "Runden pågår" : round?.status === "revealed" ? `Neste runde om ${remainingSeconds}s` : "Start runden"}
+            {round?.status === "active" ? "Round in progress" : round?.status === "revealed" ? `Next round in ${remainingSeconds}s` : "Start round"}
           </button>
         </section>
       ) : null}
@@ -187,7 +187,7 @@ export function VersusMode({
         <section className="versus-arena">
           <div className="versus-round-indicator">
             <span aria-hidden="true" className={round?.status === "active" ? "is-live" : ""} />
-            {round?.status === "active" ? `Runde ${round.number} pågår i 3D-scenen` : round?.status === "revealed" ? `Runde ${round.number} — fasit` : "Venter på neste Pokémon"}
+            {round?.status === "active" ? `Round ${round.number} is live in the 3D scene` : round?.status === "revealed" ? `Round ${round.number} — answer` : "Waiting for the next Pokémon"}
           </div>
           {round && deadline ? (
             <div
@@ -196,11 +196,11 @@ export function VersusMode({
               data-started-at={phaseStartedAt ?? undefined}
             >
               <div className="versus-countdown-label">
-                <span>{round.status === "active" ? "Tid igjen" : "Neste runde"}</span>
+                <span>{round.status === "active" ? "Time remaining" : "Next round"}</span>
                 <strong>{remainingSeconds}s</strong>
               </div>
               <div
-                aria-label={round.status === "active" ? "Tid igjen i runden" : "Tid til neste runde"}
+                aria-label={round.status === "active" ? "Time remaining in round" : "Time until next round"}
                 aria-valuemax={100}
                 aria-valuemin={0}
                 aria-valuenow={Math.round(remainingPercent)}
@@ -213,15 +213,15 @@ export function VersusMode({
           ) : null}
           {round?.status === "revealed" && round.answer ? (
             <div className="versus-answer" aria-live="assertive">
-              <span>Fasiten er</span>
+              <span>The answer is</span>
               <strong>{formatPokemonName(round.answer)}</strong>
-              <small>Vises i 15 sekunder før neste runde.</small>
+              <small>Shown for 15 seconds before the next round.</small>
             </div>
           ) : null}
           {role === "player" && round?.status === "active" ? (
             <form className="versus-guess" onSubmit={(event) => { event.preventDefault(); submitGuess(); }}>
-              <input aria-label="Ditt Pokémon-svar" autoComplete="off" autoFocus disabled={hasAnsweredCurrentRound} onChange={(event) => setGuess(event.target.value)} placeholder="Hvem er Pokémonen?" value={guess} />
-              <button className="versus-primary" disabled={hasAnsweredCurrentRound || !guess.trim()} type="submit">{hasAnsweredCurrentRound ? "Svart" : "Gjett"}</button>
+              <input aria-label="Your Pokémon answer" autoComplete="off" autoFocus disabled={hasAnsweredCurrentRound} onChange={(event) => setGuess(event.target.value)} placeholder="Who's that Pokémon?" value={guess} />
+              <button className="versus-primary" disabled={hasAnsweredCurrentRound || !guess.trim()} type="submit">{hasAnsweredCurrentRound ? "Answered" : "Guess"}</button>
             </form>
           ) : null}
           <p aria-live="polite">{feedback}</p>
