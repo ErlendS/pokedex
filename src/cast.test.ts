@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchCastConfig, initializeCastSender, sendRoomToCast } from "./cast";
+import { fetchCastConfig, initializeCastSender, sendRoomToCast, subscribeToCastState } from "./cast";
 import { CAST_NAMESPACE, createVersusJoinUrl, formatVersusPokemonName, getVersusWebSocketUrl } from "./versus";
 
 afterEach(() => {
@@ -36,10 +36,20 @@ describe("Cast configuration", () => {
       framework: {
         CastContext: {
           getInstance: () => ({
+            addEventListener: vi.fn(),
+            getCastState: () => "NOT_CONNECTED",
             getCurrentSession: () => ({ sendMessage }),
+            removeEventListener: vi.fn(),
             requestSession,
             setOptions: vi.fn(),
           }),
+        },
+        CastContextEventType: { CAST_STATE_CHANGED: "CAST_STATE_CHANGED" },
+        CastState: {
+          CONNECTED: "CONNECTED",
+          CONNECTING: "CONNECTING",
+          NOT_CONNECTED: "NOT_CONNECTED",
+          NO_DEVICES_AVAILABLE: "NO_DEVICES_AVAILABLE",
         },
       },
     };
@@ -48,6 +58,47 @@ describe("Cast configuration", () => {
 
     expect(requestSession).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenCalledWith(CAST_NAMESPACE, { type: "join-room", code: "ABCDE" });
+  });
+
+  it("reports Cast availability only after a device is discovered", () => {
+    let listener: ((event: { castState: string }) => void) | undefined;
+    const addEventListener = vi.fn((_type: string, nextListener: typeof listener) => {
+      listener = nextListener;
+    });
+    const removeEventListener = vi.fn();
+    const onStateChange = vi.fn();
+    window.cast = {
+      framework: {
+        CastContext: {
+          getInstance: () => ({
+            addEventListener,
+            getCastState: () => "NO_DEVICES_AVAILABLE",
+            getCurrentSession: () => null,
+            removeEventListener,
+            requestSession: vi.fn(async () => undefined),
+            setOptions: vi.fn(),
+          }),
+        },
+        CastContextEventType: { CAST_STATE_CHANGED: "CAST_STATE_CHANGED" },
+        CastState: {
+          CONNECTED: "CONNECTED",
+          CONNECTING: "CONNECTING",
+          NOT_CONNECTED: "NOT_CONNECTED",
+          NO_DEVICES_AVAILABLE: "NO_DEVICES_AVAILABLE",
+        },
+      },
+    };
+
+    const unsubscribe = subscribeToCastState(onStateChange);
+
+    expect(onStateChange).toHaveBeenLastCalledWith({ available: false, connected: false });
+    listener?.({ castState: "NOT_CONNECTED" });
+    expect(onStateChange).toHaveBeenLastCalledWith({ available: true, connected: false });
+    listener?.({ castState: "CONNECTED" });
+    expect(onStateChange).toHaveBeenLastCalledWith({ available: true, connected: true });
+
+    unsubscribe();
+    expect(removeEventListener).toHaveBeenCalledWith("CAST_STATE_CHANGED", listener);
   });
 });
 
@@ -68,4 +119,3 @@ describe("Versus links and formatting", () => {
     expect(formatVersusPokemonName("mr-mime")).toBe("Mr Mime");
   });
 });
-

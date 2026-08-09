@@ -9,9 +9,21 @@ type CastSession = {
 };
 
 type CastContext = {
+  addEventListener: (type: string, listener: (event: CastStateChangedEvent) => void) => void;
+  getCastState: () => string;
   getCurrentSession: () => CastSession | null;
+  removeEventListener: (type: string, listener: (event: CastStateChangedEvent) => void) => void;
   requestSession: () => Promise<void>;
   setOptions: (options: { autoJoinPolicy: string; receiverApplicationId: string }) => void;
+};
+
+type CastStateChangedEvent = {
+  castState: string;
+};
+
+export type CastDiscoveryState = {
+  available: boolean;
+  connected: boolean;
 };
 
 type CastReceiverContext = {
@@ -25,7 +37,14 @@ declare global {
     cast?: {
       framework: {
         CastContext: { getInstance: () => CastContext };
+        CastContextEventType: { CAST_STATE_CHANGED: string };
         CastReceiverContext?: { getInstance: () => CastReceiverContext };
+        CastState: {
+          CONNECTED: string;
+          CONNECTING: string;
+          NOT_CONNECTED: string;
+          NO_DEVICES_AVAILABLE: string;
+        };
       };
     };
     chrome?: {
@@ -77,6 +96,34 @@ export async function initializeCastSender(appId: string) {
   return true;
 }
 
+export function subscribeToCastState(onStateChange: (state: CastDiscoveryState) => void) {
+  const framework = window.cast?.framework;
+  const context = framework?.CastContext.getInstance();
+  if (!framework || !context) {
+    onStateChange({ available: false, connected: false });
+    return () => undefined;
+  }
+
+  const availableStates = new Set([
+    framework.CastState.NOT_CONNECTED,
+    framework.CastState.CONNECTING,
+    framework.CastState.CONNECTED,
+  ]);
+  const publish = (castState: string) => {
+    onStateChange({
+      available: availableStates.has(castState),
+      connected: castState === framework.CastState.CONNECTED,
+    });
+  };
+  const listener = (event: CastStateChangedEvent) => publish(event.castState);
+  const eventType = framework.CastContextEventType.CAST_STATE_CHANGED;
+
+  context.addEventListener(eventType, listener);
+  publish(context.getCastState());
+
+  return () => context.removeEventListener(eventType, listener);
+}
+
 export async function sendRoomToCast(namespace: string, code: string) {
   const castContext = window.cast?.framework.CastContext.getInstance();
   if (!castContext) throw new Error("Google Cast is not available in this browser.");
@@ -100,4 +147,3 @@ export async function initializeCastReceiver(
   });
   context.start({ disableIdleTimeout: true });
 }
-

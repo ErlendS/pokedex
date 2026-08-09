@@ -23,7 +23,7 @@ test("hosts a versus match, joins from a second device, and awards points", asyn
   await expect(page.getByText("Ash")).toBeVisible();
   const castConfigResponse = await page.request.get("/api/cast-config");
   expect(await castConfigResponse.json()).toMatchObject({ appId: "9DF86F21", receiverPath: "/cast" });
-  await expect(page.getByRole("button", { name: /Cast to TV|Cast unavailable/ })).toBeVisible();
+  await expect(page.locator(".versus-cast-button")).toHaveCount(0);
 
   const displayContext = await browser.newContext();
   const display = await displayContext.newPage();

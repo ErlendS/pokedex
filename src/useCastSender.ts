@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { fetchCastConfig, initializeCastSender, sendRoomToCast, type CastConfig } from "./cast";
+import {
+  fetchCastConfig,
+  initializeCastSender,
+  sendRoomToCast,
+  subscribeToCastState,
+  type CastConfig,
+} from "./cast";
 
 type CastStatus = "loading" | "unconfigured" | "unavailable" | "ready" | "connecting" | "connected" | "error";
 
@@ -10,6 +16,7 @@ export function useCastSender(roomCode: string) {
 
   useEffect(() => {
     let cancelled = false;
+    let unsubscribe: () => void = () => undefined;
     void fetchCastConfig()
       .then(async (nextConfig) => {
         if (cancelled) return;
@@ -19,14 +26,29 @@ export function useCastSender(roomCode: string) {
           return;
         }
         const available = await initializeCastSender(nextConfig.appId);
-        if (!cancelled) setStatus(available ? "ready" : "unavailable");
+        if (cancelled) return;
+        if (!available) {
+          setStatus("unavailable");
+          return;
+        }
+        unsubscribe = subscribeToCastState(({ available: hasDevice, connected }) => {
+          if (cancelled) return;
+          setStatus((current) => {
+            if (!hasDevice) return "unavailable";
+            if (connected) return "connected";
+            return current === "connecting" ? current : "ready";
+          });
+        });
       })
       .catch((reason: unknown) => {
         if (cancelled) return;
         setError(reason instanceof Error ? reason.message : "Could not initialize Google Cast.");
         setStatus("error");
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
   }, []);
 
   const castRoom = useCallback(async () => {
@@ -44,4 +66,3 @@ export function useCastSender(roomCode: string) {
 
   return { castRoom, error, status };
 }
-

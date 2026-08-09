@@ -174,23 +174,21 @@ export function VersusMode({
           <button className="versus-primary" disabled={!connected || players.length === 0 || round !== null} onClick={() => socketRef.current?.send(JSON.stringify({ type: "host:start" }))} type="button">
             {round?.status === "active" ? "Round in progress" : round?.status === "revealed" ? `Next round in ${remainingSeconds}s` : "Start round"}
           </button>
-          <button
-            className="versus-cast-button"
-            disabled={["loading", "unconfigured", "unavailable", "connecting", "error"].includes(castStatus)}
-            onClick={() => void castRoom()}
-            type="button"
-          >
-            <span aria-hidden="true" className="versus-cast-icon" />
-            {castStatus === "connected"
-              ? "Casting to TV"
-              : castStatus === "connecting"
-                ? "Connecting to TV…"
-                : castStatus === "unconfigured"
-                  ? "Cast setup pending"
-                  : castStatus === "unavailable" || castStatus === "error"
-                    ? "Cast unavailable"
+          {["ready", "connecting", "connected"].includes(castStatus) ? (
+            <button
+              className="versus-cast-button"
+              disabled={castStatus === "connecting"}
+              onClick={() => void castRoom()}
+              type="button"
+            >
+              <span aria-hidden="true" className="versus-cast-icon" />
+              {castStatus === "connected"
+                ? "Casting to TV"
+                : castStatus === "connecting"
+                  ? "Connecting to TV…"
                   : "Cast to TV"}
-          </button>
+            </button>
+          ) : null}
           {castError ? <p className="status error">{castError}</p> : null}
         </section>
       ) : null}
