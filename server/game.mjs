@@ -49,17 +49,17 @@ export function pickPokemonIdForGenerations(generationIds, random = Math.random)
   return selected[0].start;
 }
 
-export function serializeRound(round, { controller = false } = {}) {
+export function serializeRound(round) {
   if (!round) return null;
   return {
     number: round.number,
     startedAt: round.startedAt,
     endsAt: round.endsAt,
     status: round.status,
-    spriteUrl: controller ? null : round.spriteUrl,
-    typeNames: controller ? [] : round.typeNames,
+    spriteUrl: round.spriteUrl,
+    typeNames: round.typeNames,
     revealedAt: round.revealedAt ?? null,
     revealUntil: round.revealUntil ?? null,
-    answer: !controller && round.status === "revealed" ? round.pokemonName : null,
+    answer: round.status === "revealed" ? round.pokemonName : null,
   };
 }

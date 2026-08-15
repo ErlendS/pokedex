@@ -30,21 +30,17 @@ const broadcast = (room, message) => {
   const recipients = new Set([room.host, ...room.players.values().map((player) => player.socket), ...room.displays]);
   recipients.forEach((socket) => send(socket, message));
 };
-const viewerSockets = (room) => new Set([room.host, ...room.displays]);
-const playerSockets = (room) => new Set([...room.players.values()].map((player) => player.socket));
-const snapshot = (room, options) => ({
+const snapshot = (room) => ({
   type: "room:state",
   code: room.code,
-  round: serializeRound(room.round, options),
+  round: serializeRound(room.round),
   players: [...room.players.values()].map(({ id, name, score }) => ({ id, name, score })).sort((a, b) => b.score - a.score),
 });
 const broadcastState = (room) => {
-  viewerSockets(room).forEach((socket) => send(socket, snapshot(room)));
-  playerSockets(room).forEach((socket) => send(socket, snapshot(room, { controller: true })));
+  broadcast(room, snapshot(room));
 };
 const broadcastRound = (room, type, viewerExtras = {}) => {
-  viewerSockets(room).forEach((socket) => send(socket, { type, ...serializeRound(room.round), ...viewerExtras }));
-  playerSockets(room).forEach((socket) => send(socket, { type, ...serializeRound(room.round, { controller: true }) }));
+  broadcast(room, { type, ...serializeRound(room.round), ...viewerExtras });
 };
 const closeRoom = (room) => {
   clearTimeout(room.roundTimer);
@@ -178,7 +174,15 @@ webSockets.on("connection", (socket) => {
       rooms.set(code, room);
       socket.roomCode = code;
       socket.role = "host";
-      send(socket, { type: "host:created", code, playerId: null });
+      const name = String(message.name || "").trim().slice(0, 24);
+      if (!name) {
+        rooms.delete(code);
+        return send(socket, { type: "error", message: "Host name missing." });
+      }
+      const playerId = crypto.randomUUID();
+      room.players.set(playerId, { id: playerId, name, score: 0, socket, answeredRound: 0 });
+      socket.playerId = playerId;
+      send(socket, { type: "host:created", code, playerId });
       return send(socket, snapshot(room));
     }
     if (message.type === "player:join") {

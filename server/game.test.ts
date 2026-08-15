@@ -41,7 +41,7 @@ describe("versus game rules", () => {
     expect(pickPokemonIdForGenerations([1, 9], () => 0.9999)).toBe(1025);
   });
 
-  it("withholds Pokémon visuals and answers from phone controllers", () => {
+  it("shares Pokémon visuals and revealed answers with every player", () => {
     const round = {
       number: 2,
       startedAt: 1_000,
@@ -59,11 +59,11 @@ describe("versus game rules", () => {
       typeNames: ["electric"],
       answer: "pikachu",
     });
-    expect(serializeRound(round, { controller: true })).toMatchObject({
+    expect(serializeRound(round)).toMatchObject({
       number: 2,
-      spriteUrl: null,
-      typeNames: [],
-      answer: null,
+      spriteUrl: round.spriteUrl,
+      typeNames: ["electric"],
+      answer: "pikachu",
     });
   });
 });
